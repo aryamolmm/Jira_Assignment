@@ -1,12 +1,12 @@
-# TestPilot AI 🚀
+# Jira QA Assistant 🚀
 
-**TestPilot AI** is a state-of-the-art, multi-agent autonomous testing platform. 
+**Jira QA Assistant** is a state-of-the-art, multi-agent autonomous testing platform for QA Jira fetching and generation.
 
 ### 🛑 The Problem
 Modern QA cycles are often the bottleneck in Rapid Application Development. Manually translating business requirements into BDD scenarios, writing stable automation scripts, and ensuring comprehensive coverage is time-consuming, expensive, and prone to human error.
 
 ### ✅ The Solution
-TestPilot AI streamlines the entire Quality Assurance lifecycle. It transforms raw requirements (or Jira stories) into:
+Jira QA Assistant streamlines the entire Quality Assurance lifecycle. It transforms raw requirements (or Jira stories) into:
 - **High-quality BDD/Gherkin scenarios**
 - **Production-ready Playwright scripts**
 - **Deep-dive coverage analysis & self-healing rework loops**
@@ -143,4 +143,4 @@ As the lead AI architect for this project, here are the key observations from th
 ---
 
 ## 📄 License
-TestPilot AI is research-grade software. All rights reserved.
+Jira QA Assistant is research-grade software. All rights reserved.

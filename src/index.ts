@@ -59,12 +59,12 @@ async function runPipeline() {
     console.log(coverage);
     console.log("--------------------------------------");
 
-    console.log("\n✨ TestPilot AI: Pipeline completed using memory cache!");
+    console.log("\n✨ Jira QA Assistant: Pipeline completed using memory cache!");
     return;
   }
 
   // ── 3. Gherkin Agent ─────────────────────────────────────────────────────
-  console.log("\n🤖 [Gherkin Agent] Generating BDD scenarios...");
+  console.log("\n🤖 [Gherkin Agent] Generating BDD testcases...");
   const gherkinResult = await generateGherkin(featureDescription);
   const gherkin = gherkinResult.gherkin;
   const gherkinPath = saveGherkin(gherkin);
@@ -106,10 +106,10 @@ async function runPipeline() {
     timestamp: new Date().toISOString()
   });
 
-  console.log("\n✨ TestPilot AI: Full pipeline successfully completed!");
+  console.log("\n✨ Jira QA Assistant: Full pipeline successfully completed!");
 }
 
 runPipeline().catch((err) => {
-  console.error("\n❌ Fatal Error in TestPilot AI:", err);
+  console.error("\n❌ Fatal Error in Jira QA Assistant:", err);
   process.exit(1);
 });

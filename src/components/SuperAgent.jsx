@@ -90,7 +90,7 @@ function CodeBlock({ code, lang = 'gherkin' }) {
 }
 
 const PIPELINE_STEPS = [
-  { id: 1, agent: 'ArchitectAgent',  tool: 'generate_gherkin',     label: 'BDD Scenarios',    icon: <Beaker size={15} />,     color: '#c084fc' },
+  { id: 1, agent: 'ArchitectAgent',  tool: 'generate_gherkin',     label: 'BDD Testcases',    icon: <Beaker size={15} />,     color: '#c084fc' },
   { id: 2, agent: 'AutomationAgent', tool: 'generate_test_cases',  label: 'Playwright Tests', icon: <Code2 size={15} />,      color: '#60a5fa' },
   { id: 3, agent: 'CoverageAgent',   tool: 'analyze_coverage',     label: 'Coverage Report',  icon: <BarChart2 size={15} />,  color: '#34d399' },
   { id: 4, agent: 'ReworkAgent',     tool: 'improve_test_cases',   label: 'Improved Tests',   icon: <RefreshCcw size={15} />, color: '#fbbf24' },
@@ -98,7 +98,7 @@ const PIPELINE_STEPS = [
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-const SuperAgent = () => {
+const SuperAgent = ({ credentials }) => {
   const [task, setTask]           = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [trace, setTrace]         = useState([]);
@@ -128,10 +128,17 @@ const SuperAgent = () => {
 
     try {
       const userMemory = localStorage.getItem('testpilot_ai_memory') || '';
+      const activeKey = credentials?.engine === 'groq' ? credentials.groqKey : 
+                        credentials?.engine === 'openrouter' ? credentials.openRouterKey :
+                        credentials?.engine === 'openai' ? credentials.openaiKey :
+                        credentials?.engine === 'claude' ? credentials.claudeKey :
+                        credentials?.geminiKey;
+
       const resp = await axios.post('http://localhost:3001/api/agent/super/run', {
         input: task,
         userMemory,
-        engine: 'groq'
+        engine: credentials?.engine || 'gemini',
+        apiKey: activeKey
       });
 
       // Animate real trace entries one by one
@@ -330,7 +337,7 @@ const SuperAgent = () => {
   const TABS = [
     { id: 'trace',    label: 'Execution Trace', icon: <Terminal size={13} /> },
     { id: 'memory',   label: 'Memory Insight',  icon: <Brain size={13} /> },
-    { id: 'gherkin',  label: 'BDD Scenarios',   icon: <Beaker size={13} /> },
+    { id: 'gherkin',  label: 'BDD Testcases',   icon: <Beaker size={13} /> },
     { id: 'tests',    label: 'Playwright Tests', icon: <Code2 size={13} /> },
     { id: 'coverage', label: 'Coverage',         icon: <BarChart2 size={13} /> },
     { id: 'improved', label: 'Improved Tests',   icon: <RefreshCcw size={13} /> },
@@ -358,9 +365,9 @@ const SuperAgent = () => {
             <Zap size={20} color="white" />
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>Super Agent</h2>
+            <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>AI Orchestrator</h2>
             <p style={{ margin: 0, color: '#7c3aed', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '1px' }}>
-              Autonomous Multi-Agent Pipeline
+              Autonomous QA Pipeline · <span style={{ color: '#d946ef' }}>{credentials?.engine || 'Gemini'} Mode</span>
             </p>
           </div>
           {result && !isRunning && (
@@ -371,7 +378,7 @@ const SuperAgent = () => {
         </div>
 
         <p style={{ color: '#94a3b8', fontSize: '0.88rem', margin: '1rem 0 1.5rem', lineHeight: 1.6 }}>
-          Describe any feature or user story. The Super Agent will orchestrate <strong style={{ color: '#c084fc' }}>ArchitectAgent → AutomationAgent → CoverageAgent → ReworkAgent</strong> using memory-aware, tool-driven execution.
+          Describe any feature or user story. The AI Orchestrator will run <strong style={{ color: '#c084fc' }}>Architect → Automation → Coverage → Rework</strong> agents using smart execution.
         </p>
 
         {/* Input area */}
@@ -412,8 +419,8 @@ const SuperAgent = () => {
             }}
           >
             {isRunning
-              ? <><Loader2 size={16} className="spin-icon" /> Running...</>
-              : <><Play size={16} /> Execute</>
+              ? <><Loader2 size={16} className="spin-icon" /> Generating...</>
+              : <><Play size={16} /> Run Pipeline</>
             }
           </button>
         </div>

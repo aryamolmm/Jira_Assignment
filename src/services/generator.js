@@ -5,9 +5,9 @@ const getProxyUrl = () => window.location.hostname === 'localhost' || window.loc
   : window.location.origin;
 
 /**
- * Agent 1: Test Case Creation (AI Driven)
+ * QA Engine 1: Test Spec Creation (AI Driven)
  */
-export const generateTestCasesAI = async (story, apiKey, engine = 'gemini') => {
+export const generateTestCasesAI = async (story, apiKey, engine = 'gemini', typesList = 'happy, negative, edge', testFormat = 'bdd') => {
   const PROXY_URL = getProxyUrl();
   const userMemory = localStorage.getItem('testpilot_ai_memory') || '';
   
@@ -17,20 +17,22 @@ export const generateTestCasesAI = async (story, apiKey, engine = 'gemini') => {
       apiKey,
       type: 'testcases',
       engine,
-      userMemory
+      userMemory,
+      typesList,
+      testFormat
     });
     return response.data.testCases;
   } catch (error) {
     console.error('Agent 1 Error:', error);
     const backendError = error.response?.data?.error;
-    throw new Error(backendError || 'Agent 1 failed to analyze the story.');
+    throw new Error(backendError || 'QA Engine failed to parse Jira story.');
   }
 };
 
 /**
- * Agent 2: Playwright Script Generation (AI Driven)
+ * QA Engine 2: Automation Code Forging (AI Driven)
  */
-export const generatePlaywrightScriptAI = async (story, apiKey, engine = 'gemini') => {
+export const generateAutomationScriptAI = async (story, apiKey, engine = 'gemini', tool = 'playwright', language = 'typescript', framework = 'none', mappingMode = 'ai') => {
   const PROXY_URL = getProxyUrl();
   const userMemory = localStorage.getItem('testpilot_ai_memory') || '';
 
@@ -40,19 +42,51 @@ export const generatePlaywrightScriptAI = async (story, apiKey, engine = 'gemini
       apiKey,
       type: 'script',
       engine,
-      userMemory
+      userMemory,
+      tool,
+      language,
+      framework,
+      mappingMode
     });
     return response.data.script;
+
   } catch (error) {
     console.error('Agent 2 Error:', error);
-    throw new Error('Agent 2 failed to generate the automation script.');
+    throw new Error('QA Engine failed to generate automation script.');
+  }
+};
+
+
+/**
+ * QA Engine 2.1: Update Script from Steps (AI Driven)
+ */
+export const updateScriptFromStepsAI = async (story, script, steps, apiKey, engine = 'gemini', tool = 'playwright', language = 'typescript') => {
+  const PROXY_URL = getProxyUrl();
+  const userMemory = localStorage.getItem('testpilot_ai_memory') || '';
+
+  try {
+    const response = await axios.post(`${PROXY_URL}/api/ai/generate`, {
+      story,
+      apiKey,
+      type: 'update_from_steps',
+      engine,
+      userMemory,
+      tool,
+      language,
+      script,
+      steps
+    });
+    return { script: response.data.script, steps: response.data.steps };
+  } catch (error) {
+    console.error('Agent 2.1 Error:', error);
+    throw new Error('QA Engine failed to update script from steps.');
   }
 };
 
 /**
- * Agent 3: Rework Failed Script
+ * QA Engine 3: Self-Healing Forger
  */
-export const reworkScriptAI = async (story, script, errorLog, apiKey, engine = 'gemini') => {
+export const reworkScriptAI = async (story, script, errorLog, apiKey, engine = 'gemini', tool = 'playwright', language = 'typescript') => {
   const PROXY_URL = getProxyUrl();
   const userMemory = localStorage.getItem('testpilot_ai_memory') || '';
 
@@ -63,12 +97,14 @@ export const reworkScriptAI = async (story, script, errorLog, apiKey, engine = '
       errorLog,
       apiKey,
       engine,
-      userMemory
+      userMemory,
+      tool,
+      language
     });
     return response.data.script;
   } catch (error) {
     console.error('Agent 3 Error:', error);
-    throw new Error('Agent 3 failed to rework the script.');
+    throw new Error('QA Engine failed to fix script.');
   }
 };
 

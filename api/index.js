@@ -579,34 +579,80 @@ Pipeline executed with memory-aware tool-calling logic`;
 // ─── Super Agent Full Execution Pipeline ────────────────────────────────────
 // Calls each agent in sequence using real Groq API calls
 
-async function callGroq(apiKey, prompt) {
+async function callAI(engine, apiKey, prompt) {
+  const resolvedEngine = (engine || 'gemini').toLowerCase();
+  
   try {
-    const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      response_format: { type: 'json_object' }
-    }, {
-      headers: {
-        'Authorization': `Bearer ${apiKey || process.env.GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    return response.data.choices[0].message.content;
+    if (resolvedEngine === 'groq') {
+      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        response_format: { type: 'json_object' }
+      }, {
+        headers: {
+          'Authorization': `Bearer ${apiKey || process.env.GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.data.choices[0].message.content;
+    } else if (resolvedEngine === 'openrouter') {
+      console.log(`[OpenRouter] Calling model: deepseek/deepseek-chat`);
+      const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+        model: "deepseek/deepseek-chat",
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        response_format: { type: "json_object" }
+      }, {
+        headers: { 
+          'Authorization': `Bearer ${apiKey}`, 
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'http://localhost:5173',
+          'X-Title': 'TestPilot AI'
+        }
+      });
+      console.log(`[OpenRouter] Response received successfully`);
+      return response.data.choices[0].message.content;
+    } else if (resolvedEngine === 'openai') {
+      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: "gpt-4-turbo",
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        response_format: { type: "json_object" }
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+      });
+      return response.data.choices[0].message.content;
+    } else if (resolvedEngine === 'claude') {
+      const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
+      }, {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }
+      });
+      return response.data.content[0].text;
+    } else {
+      const genAI = new GoogleGenerativeAI(apiKey || process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    }
   } catch (err) {
-    const groqMsg = err.response?.data?.error?.message || err.response?.data?.message || err.message;
+    const msg = err.response?.data?.error?.message || err.response?.data?.message || err.message;
     const statusCode = err.response?.status;
-    if (statusCode === 401) throw new Error(`Groq API key invalid or missing (401). Check your GROQ_API_KEY in .env`);
-    if (statusCode === 429) throw new Error(`Groq rate limit exceeded (429). Please wait or upgrade your Groq plan.`);
-    throw new Error(`Groq API error ${statusCode || ''}: ${groqMsg}`);
+    console.error(`[AI Error ${resolvedEngine}]:`, msg);
+    throw new Error(`${resolvedEngine} API error ${statusCode || ''}: ${msg}`);
   }
 }
 
 app.post('/api/agent/super/run', async (req, res) => {
-  const { input, userMemory = '', engine = 'groq', apiKey } = req.body;
+  const { input, userMemory = '', engine = 'gemini', apiKey } = req.body;
   if (!input) return res.status(400).json({ error: 'Missing input for Super Agent' });
 
-  const resolvedKey = apiKey || process.env.GROQ_API_KEY;
+  const resolvedEngine = engine.toLowerCase();
+  const resolvedKey = apiKey;
   const executionTrace = [];
   const startTime = Date.now();
   let step = 0;
@@ -616,6 +662,17 @@ app.post('/api/agent/super/run', async (req, res) => {
     const entry = { step, agent, tool, message, status, ts: Date.now() - startTime };
     executionTrace.push(entry);
     return entry;
+  };
+
+  const parseAIResponse = (text) => {
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const jsonText = jsonMatch ? jsonMatch[0] : text;
+      return JSON.parse(jsonText);
+    } catch (e) {
+      console.error('Failed to parse AI response:', text);
+      throw new Error('AI returned an invalid JSON format. Please try again.');
+    }
   };
 
   try {
@@ -686,8 +743,8 @@ Rules:
 - Use realistic, testable steps
 - Return ONLY valid JSON: { "gherkin": "..." }`;
 
-    const gherkinRaw = await callGroq(resolvedKey, gherkinPrompt);
-    const gherkinData = JSON.parse(gherkinRaw);
+    const gherkinRaw = await callAI(resolvedEngine, resolvedKey, gherkinPrompt);
+    const gherkinData = parseAIResponse(gherkinRaw);
     const rawGherkin = gherkinData.gherkin || '';
     const gherkin = typeof rawGherkin === 'object' ? JSON.stringify(rawGherkin, null, 2) : String(rawGherkin);
 
@@ -711,8 +768,8 @@ Rules:
 - Include proper assertions
 - Return ONLY valid JSON: { "test_code": "..." }`;
 
-    const testRaw = await callGroq(resolvedKey, testPrompt);
-    const testData = JSON.parse(testRaw);
+    const testRaw = await callAI(resolvedEngine, resolvedKey, testPrompt);
+    const testData = parseAIResponse(testRaw);
     const rawTest = testData.test_code || '';
     const testCode = typeof rawTest === 'object' ? JSON.stringify(rawTest, null, 2) : String(rawTest);
 
@@ -742,8 +799,8 @@ Return ONLY valid JSON:
   "summary": "one-line coverage summary"
 }`;
 
-    const coverageRaw = await callGroq(resolvedKey, coveragePrompt);
-    const coverage = JSON.parse(coverageRaw);
+    const coverageRaw = await callAI(resolvedEngine, resolvedKey, coveragePrompt);
+    const coverage = parseAIResponse(coverageRaw);
 
     log('CoverageAgent', 'analyze_coverage',
       `Tool returned: Status=${coverage.coverage_status}, Quality=${coverage.quality_score}/100, Missing=${coverage.missing_cases?.length || 0} cases`,
@@ -778,8 +835,8 @@ Your task:
 
 Return ONLY valid JSON: { "improved_test_code": "..." }`;
 
-      const reworkRaw = await callGroq(resolvedKey, reworkPrompt);
-      const reworkData = JSON.parse(reworkRaw);
+      const reworkRaw = await callAI(resolvedEngine, resolvedKey, reworkPrompt);
+      const reworkData = parseAIResponse(reworkRaw);
       const rawImproved = reworkData.improved_test_code;
       if (Array.isArray(rawImproved)) {
         improvedTestCode = rawImproved.join('\n');
@@ -870,50 +927,121 @@ app.post('/api/jira/fetch', async (req, res) => {
 
 // Endpoint for AI-driven generation
 app.post('/api/ai/generate', async (req, res) => {
-  const { story, apiKey, type, engine = 'gemini', userMemory = '' } = req.body;
+  const { story, apiKey, type, userMemory = '', tool = 'playwright', language = 'typescript', framework = 'none', mappingMode = 'ai', typesList = 'Happy Path, Negative, Edge', testFormat = 'bdd' } = req.body;
+  const engine = (req.body.engine || 'gemini').toLowerCase().trim();
+  
+  console.log(`[AI GENERATE] Type: ${type} | Engine: ${engine} | API Key Present: ${!!apiKey}`);
   
   const memoryContext = userMemory ? `\n[PREREQUISITES / GLOBAL CONTEXT]\n${userMemory}\n` : '';
+  const frameworkContext = framework !== 'none' ? ` Use the ${framework} framework.` : '';
+  
+  const mappingInstructions = mappingMode === 'direct' 
+    ? `\nCRITICAL MAPPING RULE: Use STRICT Direct Mapping. You MUST map every single BDD step from the story EXACTLY to code. Do not infer or hallucinate missing steps. Do not add AI-enhanced validations unless explicitly stated in the story.`
+    : `\nCRITICAL MAPPING RULE: Use AI Enhanced Mapping. You should intelligently infer required setup, teardown, and implicit assertions that make the test robust, even if not explicitly stated in the story.`;
 
   const prompt = type === 'script' 
     ? `[AGENT 2: AUTOMATION SPECIALIST]
        ${memoryContext}
-       Write a complete Playwright TypeScript automation script for Jira Story: "${story.summary}".
+       Write a complete automation script using ${tool} and ${language} for Jira Story: "${story.summary}".${frameworkContext}
+       ${mappingInstructions}
        Description: ${story.description || 'No description'}.
+       
+       CRITICAL FRAMEWORK RULES:
+       - If tool is 'robot' or 'Robot Framework', you MUST generate valid .robot DSL syntax (*** Settings ***, *** Test Cases ***), DO NOT generate raw Python code with Selenium imports.
+       - If tool is 'cypress', generate valid Cypress describe/it blocks.
+       - If tool is 'selenium', generate valid Selenium WebDriver code in ${language}.
+       - If tool is 'playwright', generate valid Playwright test code in ${language}.
+       
        The script MUST be production-ready and include Happy Path, Negative, and Edge cases.
-       Return ONLY the TypeScript code block.`
+       Return ONLY the raw code block with no markdown, no JSON wrapper.`
     : `[AGENT 1: BDD ANALYST]
        ${memoryContext}
        Analyze this Requirement/Story: "${story.summary}".
        Description: ${story.description || 'No description'}.
-       Generate 8 diverse test cases (Happy Path, Negative, Edge, Boundary) in Strict BDD / Gherkin format.
+       Generate diverse test cases covering these types: ${typesList}.
+       The test steps MUST be in ${testFormat === 'bdd' ? 'Strict BDD / Gherkin format (Given/When/Then)' : 'Normal step-by-step format (1. Do this, 2. Do that)'}.
        Format: JSON array of objects.
-       Columns required: "TC_ID" (e.g. TC-01), "Scenario_Name", "Type" (e.g. Happy Path), and "Gherkin" (The Given/When/Then text).
+       Columns required: "TC_ID" (e.g. TC-01), "Scenario_Name", "Type" (e.g. Happy Path), "Gherkin" (The test steps text), and "Expected_Result" (Brief statement of expected outcome).
        Return ONLY the valid JSON array without markdown wrapping.`;
 
   try {
     let text = '';
-    if (engine === 'groq') {
-      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1
-      }, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      text = response.data.choices[0].message.content;
-    } else {
+
+    const callGemini = async () => {
       if (!apiKey) throw new Error('Gemini API Key is required');
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
       const result = await model.generateContent(prompt);
-      text = result.response.text();
+      return result.response.text();
+    };
+
+    if (engine === 'groq') {
+      try {
+        const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1
+        }, {
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+        });
+        text = groqRes.data.choices[0].message.content;
+      } catch (groqErr) {
+        const isRateLimit = groqErr.response?.status === 429 || (groqErr.response?.data?.error?.message || '').toLowerCase().includes('rate limit') || (groqErr.response?.data?.error?.message || '').toLowerCase().includes('tokens per day');
+        if (isRateLimit) {
+          console.warn('[Fallback] Groq rate limit hit — switching to Gemini automatically.');
+          text = await callGemini();
+        } else {
+          throw groqErr;
+        }
+      }
+    } else if (engine === 'openai') {
+      const oaiRes = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: "gpt-4-turbo",
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+      });
+      text = oaiRes.data.choices[0].message.content;
+    } else if (engine === 'claude') {
+      const claudeRes = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
+      }, {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }
+      });
+      text = claudeRes.data.content[0].text;
+    } else if (engine === 'openrouter') {
+      try {
+        console.log(`[OpenRouter] Calling model: deepseek/deepseek-chat for generation`);
+        const orRes = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+          model: "deepseek/deepseek-chat",
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1
+        }, {
+          headers: { 
+            'Authorization': `Bearer ${apiKey}`, 
+            'Content-Type': 'application/json', 
+            'HTTP-Referer': 'http://localhost:5173', 
+            'X-Title': 'TestPilot AI' 
+          }
+        });
+        console.log(`[OpenRouter] Generation successful`);
+        text = orRes.data.choices[0].message.content;
+      } catch (orErr) {
+        const errMsg = orErr.response?.data?.error?.message || orErr.response?.data?.message || orErr.message;
+        const errData = JSON.stringify(orErr.response?.data || {}, null, 2);
+        console.error('[OpenRouter Full Error]:', errData);
+        throw new Error(`OpenRouter Error: ${errMsg}`);
+      }
+    } else {
+      text = await callGemini();
     }
 
     if (type === 'script') {
-        text = text.replace(/```typescript|```ts|```|typescript/g, '').trim();
+        text = text.replace(/```[a-z]*/gi, '').replace(/```/g, '').trim();
         res.json({ script: text });
     } else {
         const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
@@ -929,39 +1057,94 @@ app.post('/api/ai/generate', async (req, res) => {
 
 // [AGENT 3: REWORK AGENT]
 app.post('/api/ai/rework', async (req, res) => {
-  const { story, script, errorLog, apiKey, engine = 'gemini', userMemory = '' } = req.body;
+  const { story, script, errorLog, apiKey, engine = 'gemini', userMemory = '', tool = 'playwright', language = 'typescript', framework = 'none' } = req.body;
   
   const memoryContext = userMemory ? `\n[PREREQUISITES / GLOBAL CONTEXT]\n${userMemory}\n` : '';
+  const frameworkContext = framework !== 'none' ? ` Use the ${framework} framework.` : '';
 
   const prompt = `[AGENT 3: DEBUG & REWORK SPECIALIST]
     ${memoryContext}
-    The following Playwright script failed.
+    The following ${tool} script (${language}) failed.
     STORY: ${story.summary}
     SCRIPT: ${script}
     ERROR LOG: ${errorLog}
-    Return ONLY the corrected TypeScript code block.`;
+    Return ONLY the corrected code block for ${tool} and ${language}.${frameworkContext}`;
 
   try {
     let text = '';
-    if (engine === 'groq') {
-      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1
-      }, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      text = response.data.choices[0].message.content;
-    } else {
+
+    const callGeminiRework = async () => {
       if (!apiKey) throw new Error('Gemini API Key is required');
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
       const result = await model.generateContent(prompt);
-      text = result.response.text();
+      return result.response.text();
+    };
+
+    if (engine === 'groq') {
+      try {
+        const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1
+        }, {
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+        });
+        text = groqRes.data.choices[0].message.content;
+      } catch (groqErr) {
+        const isRateLimit = groqErr.response?.status === 429 || (groqErr.response?.data?.error?.message || '').toLowerCase().includes('rate limit') || (groqErr.response?.data?.error?.message || '').toLowerCase().includes('tokens per day');
+        if (isRateLimit) {
+          console.warn('[Fallback] Groq rate limit hit — switching to Gemini for rework.');
+          text = await callGeminiRework();
+        } else {
+          throw groqErr;
+        }
+      }
+    } else if (engine === 'openai') {
+      const oaiRes = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: "gpt-4-turbo",
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+      });
+      text = oaiRes.data.choices[0].message.content;
+    } else if (engine === 'claude') {
+      const claudeRes = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
+      }, {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }
+      });
+      text = claudeRes.data.content[0].text;
+    } else if (engine === 'openrouter') {
+      try {
+        console.log(`[OpenRouter] Calling model: deepseek/deepseek-chat for rework`);
+        const orRes = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+          model: "deepseek/deepseek-chat",
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1
+        }, {
+          headers: { 
+            'Authorization': `Bearer ${apiKey}`, 
+            'Content-Type': 'application/json', 
+            'HTTP-Referer': 'http://localhost:5173', 
+            'X-Title': 'TestPilot AI' 
+          }
+        });
+        console.log(`[OpenRouter] Rework successful`);
+        text = orRes.data.choices[0].message.content;
+      } catch (orErr) {
+        const errMsg = orErr.response?.data?.error?.message || orErr.response?.data?.message || orErr.message;
+        console.error('[OpenRouter Rework Error]:', errMsg);
+        throw new Error(`OpenRouter Error: ${errMsg}`);
+      }
+    } else {
+      text = await callGeminiRework();
     }
+
     res.json({ script: text.replace(/```typescript|```ts|```|typescript/g, '').trim() });
   } catch (error) {
     res.status(500).json({ error: error.response?.data?.error?.message || error.message });
@@ -970,19 +1153,28 @@ app.post('/api/ai/rework', async (req, res) => {
 
 // Endpoint to run a Playwright test script
 app.post('/api/test/run', async (req, res) => {
-  const { script, id } = req.body;
-  if (!script) return res.status(400).json({ error: 'No script provided' });
-  try {
-    const testsDir = join(tmpdir(), 'tests');
-    try { await mkdir(testsDir, { recursive: true }); } catch (e) {}
-    const testPath = join(testsDir, `${id}_test.spec.ts`);
-    await writeFile(testPath, script);
-    exec(`npx playwright test "${testPath}" --reporter=list`, (err, stdout, stderr) => {
-      res.json({ success: !err, output: stdout, error: err ? stderr || err.message : null });
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const { script, id, tool = 'playwright' } = req.body;
+    if (!script) return res.status(400).json({ error: 'No script provided' });
+    
+    if (tool !== 'playwright') {
+      return res.json({ 
+        success: true, 
+        output: `⚠️ Automated execution for ${tool} is not configured in this environment.\n\nPlease copy the generated code to your local ${tool} project for execution.`, 
+        error: null 
+      });
+    }
+
+    try {
+      const testsDir = join(tmpdir(), 'tests');
+      try { await mkdir(testsDir, { recursive: true }); } catch (e) {}
+      const testPath = join(testsDir, `${id}_test.spec.ts`);
+      await writeFile(testPath, script);
+      exec(`npx playwright test "${testPath}" --reporter=list`, (err, stdout, stderr) => {
+        res.json({ success: !err, output: stdout, error: err ? stderr || err.message : null });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
 });
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {

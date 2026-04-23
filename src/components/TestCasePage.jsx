@@ -1,82 +1,80 @@
 import { useState, useEffect, useRef } from 'react'
-import { generateTestCasesAI, convertToCSV, convertToExcel, generatePlaywrightScriptAI } from '../services/generator'
+import { generateTestCasesAI, convertToCSV, convertToExcel, generateAutomationScriptAI } from '../services/generator'
 
 const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
   const [testCases, setTestCases] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [autoGenerate, setAutoGenerate] = useState(false)
-  const [script, setScript] = useState('')
-  const [isGeneratingScript, setIsGeneratingScript] = useState(false)
-  const [copiedScript, setCopiedScript] = useState(false)
   const [editingIndex, setEditingIndex] = useState(null)
   const [editFormData, setEditFormData] = useState({})
-  
-  const scriptRef = useRef(null)
-  const hasGeneratedRef = useRef(false)
+  const [testFormat, setTestFormat] = useState('bdd')
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const dropdownRef = useRef(null)
+  const [selectedTypes, setSelectedTypes] = useState({
+    happy: true,
+    negative: true,
+    edge: true,
+    performance: false,
+    security: false
+  })
 
-  const handleCopyScript = () => {
-    navigator.clipboard.writeText(script)
-    setCopiedScript(true)
-    setTimeout(() => setCopiedScript(false), 2000)
+  const toggleType = (type) => {
+    setSelectedTypes(prev => ({ ...prev, [type]: !prev[type] }))
   }
+
+  const getActiveKey = () => {
+    switch (credentials.engine) {
+      case 'groq': return credentials.groqKey;
+      case 'openrouter': return credentials.openRouterKey;
+      case 'openai': return credentials.openaiKey;
+      case 'claude': return credentials.claudeKey;
+      default: return credentials.geminiKey;
+    }
+  }
+
+  const performAnalysis = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const typesList = Object.entries(selectedTypes).filter(([_, isSelected]) => isSelected).map(([type]) => type).join(', ')
+      const activeKey = getActiveKey();
+      
+      if (!activeKey) {
+        throw new Error(`No API key found for the selected engine (${credentials.engine}). Please check your Settings.`);
+      }
+
+      const cases = await generateTestCasesAI(story, activeKey, credentials.engine, typesList, testFormat)
+      
+      // Map Work Key to TC_ID
+      const mappedCases = cases.map(c => {
+        const newC = { ...c, 'TC_ID': c['Work Key'] || c['TC_ID'] || `TC-${Math.floor(Math.random() * 1000)}` };
+        delete newC['Work Key'];
+        return newC;
+      });
+
+      setTestCases(mappedCases)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Run analysis on mount
   useEffect(() => {
-    const performAnalysis = async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        const cases = await generateTestCasesAI(story, credentials.geminiKey, credentials.engine)
-        
-        // Map Work Key to TC_ID
-        const mappedCases = cases.map(c => {
-          const newC = { ...c, 'TC_ID': c['Work Key'] || c['TC_ID'] || `TC-${Math.floor(Math.random() * 1000)}` };
-          delete newC['Work Key'];
-          return newC;
-        });
-
-        setTestCases(mappedCases)
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
-    }
     performAnalysis()
   }, [])
-
-  // When autoGenerate is toggled ON and test cases are ready, auto-generate script
-  useEffect(() => {
-    if (autoGenerate && testCases.length > 0 && !script && !isGeneratingScript && !hasGeneratedRef.current) {
-      hasGeneratedRef.current = true
-      handleGenerateScript()
-    }
-    // If toggled off, reset so it can regenerate when toggled on again
-    if (!autoGenerate) {
-      hasGeneratedRef.current = false
-    }
-  }, [autoGenerate, testCases])
-
-  // When script is ready and auto is on, scroll to it
-  useEffect(() => {
-    if (script && autoGenerate && scriptRef.current) {
-      scriptRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, [script])
-
-  const handleGenerateScript = async () => {
-    setIsGeneratingScript(true)
-    setScript('')
-    try {
-      const generatedScript = await generatePlaywrightScriptAI(story, credentials.geminiKey, credentials.engine)
-      setScript(generatedScript)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsGeneratingScript(false)
-    }
-  }
 
   const handleEditRow = (index, tc) => {
     setEditingIndex(index)
@@ -114,7 +112,7 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
     <div className="glass-card animate-pulse" style={{ textAlign: 'center', padding: '4rem' }}>
       <div className="spinner" style={{ margin: '0 auto 1.5rem' }}></div>
       <h2 className="title-gradient">Analyzing Story</h2>
-      <p style={{ color: '#94a3b8' }}>Generating a comprehensive QA suite...</p>
+      <p style={{ color: '#94a3b8' }}>Generating comprehensive QA suite...</p>
     </div>
   )
 
@@ -132,34 +130,28 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
       <div className="glass-card" style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <button onClick={onBack} style={{ width: 'auto', marginBottom: '0.75rem', background: 'transparent', border: '1px solid #10b981', color: '#10b981', padding: '0.4rem 1rem', fontSize: '0.85rem', borderRadius: '8px' }}>
-            🔍 Fetch Another ID
+            🔍 Back to Search
           </button>
-          <h2 className="title-gradient" style={{ margin: 0 }}>Test Cases</h2>
+          <h2 className="title-gradient" style={{ margin: 0 }}>BDD Testcases</h2>
           <p style={{ color: '#94a3b8', fontSize: '0.9rem', margin: '0.25rem 0 0' }}>{story?.key} – {story?.summary?.slice(0, 60)}...</p>
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* AUTO TOGGLE */}
-          <div
-            onClick={() => setAutoGenerate(prev => !prev)}
+          <button
+            onClick={onGoToAutomation}
+            disabled={testCases.length === 0}
             style={{
-              display: 'flex', alignItems: 'center', gap: '0.6rem',
-              background: autoGenerate ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.05)',
-              padding: '0.5rem 1rem', borderRadius: '30px',
-              border: `1px solid ${autoGenerate ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
-              cursor: 'pointer', transition: '0.3s', userSelect: 'none'
+              padding: '0.6rem 1.2rem', fontSize: '0.85rem',
+              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+              boxShadow: '0 4px 15px -5px rgba(99,102,241,0.4)',
+              borderRadius: '8px', transition: 'transform 0.2s',
+              color: 'white', fontWeight: 600, border: 'none', cursor: 'pointer'
             }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
           >
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: autoGenerate ? '#818cf8' : '#64748b' }}>
-              AUTO
-            </span>
-            <div style={{ width: '38px', height: '20px', background: autoGenerate ? '#6366f1' : '#334155', borderRadius: '10px', position: 'relative', transition: '0.3s' }}>
-              <div style={{ width: '14px', height: '14px', background: 'white', borderRadius: '50%', position: 'absolute', top: '3px', left: autoGenerate ? '20px' : '3px', transition: '0.3s ease' }}></div>
-            </div>
-            <span style={{ fontSize: '0.78rem', color: autoGenerate ? '#4ade80' : '#ef4444', fontWeight: 700 }}>
-              {autoGenerate ? 'ON' : 'OFF'}
-            </span>
-          </div>
+            Generate Automation Script →
+          </button>
 
           <button
             onClick={() => downloadFile(convertToCSV(testCases), `${story.id}_test_cases.csv`, 'text/csv')}
@@ -178,13 +170,69 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
         </div>
       </div>
 
+      {/* Generation Configuration Panel */}
+      <div className="glass-card" style={{ marginBottom: '2rem', padding: '1.5rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start', background: 'rgba(15, 23, 42, 0.6)', overflow: 'visible', zIndex: 10 }}>
+        <div style={{ flex: 1, minWidth: '250px', position: 'relative' }} ref={dropdownRef}>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: '#a5b4fc', marginBottom: '0.8rem', fontWeight: 600 }}>Test Types</label>
+          <div 
+            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            style={{ 
+              padding: '0.6rem 1rem', borderRadius: '8px', background: '#0f172a', 
+              border: '1px solid rgba(99, 102, 241, 0.3)', color: '#f8fafc', 
+              width: '100%', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' 
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {Object.entries(selectedTypes).filter(([_, isSelected]) => isSelected).map(([type]) => type.charAt(0).toUpperCase() + type.slice(1)).join(', ') || 'Select Types...'}
+            </span>
+            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>▼</span>
+          </div>
+
+          {isDropdownOpen && (
+            <div style={{ 
+              position: 'absolute', top: 'calc(100% + 0.5rem)', left: 0, width: '100%', 
+              background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', 
+              border: '1px solid rgba(139, 92, 246, 0.4)', borderRadius: '12px', zIndex: 50, 
+              padding: '0.5rem', boxShadow: '0 10px 40px rgba(0,0,0,0.6)', overflow: 'hidden'
+            }}>
+              {['happy', 'negative', 'edge', 'performance', 'security'].map(type => (
+                <label key={type} style={{ 
+                  display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.8rem', 
+                  cursor: 'pointer', borderRadius: '8px', background: 'transparent', transition: 'background 0.2s', margin: 0 
+                }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(139, 92, 246, 0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${selectedTypes[type] ? '#8b5cf6' : 'rgba(255,255,255,0.3)'}`, background: selectedTypes[type] ? '#8b5cf6' : 'transparent', transition: '0.2s' }}>
+                    {selectedTypes[type] && <span style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>✓</span>}
+                  </div>
+                  <input type="checkbox" checked={selectedTypes[type]} onChange={() => toggleType(type)} style={{ display: 'none' }} />
+                  <span style={{ fontSize: '0.9rem', color: selectedTypes[type] ? '#fff' : '#cbd5e1', textTransform: 'capitalize', fontWeight: selectedTypes[type] ? 600 : 400 }}>{type}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: '200px' }}>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: '#a5b4fc', marginBottom: '0.8rem', fontWeight: 600 }}>TEST FORMAT</label>
+          <select value={testFormat} onChange={e => setTestFormat(e.target.value)} style={{ padding: '0.6rem 1rem', borderRadius: '8px', background: '#0f172a', border: '1px solid rgba(99, 102, 241, 0.3)', color: '#f8fafc', width: '100%', outline: 'none' }}>
+            <option value="bdd">BDD / Gherkin Format</option>
+            <option value="normal">Normal (Step-by-step) Format</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%' }}>
+          <button onClick={performAnalysis} className="btn-primary" disabled={loading} style={{ padding: '0.8rem 1.5rem', marginTop: '1.5rem', whiteSpace: 'nowrap' }}>
+            {loading ? 'Generating...' : '↺ Regenerate Tests'}
+          </button>
+        </div>
+      </div>
+
       {/* Test Cases Table */}
       {testCases.length > 0 && (
         <div className="glass-card" style={{ padding: 0, overflowX: 'auto', marginBottom: '2rem' }}>
           <table style={{ minWidth: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead style={{ background: 'rgba(255,255,255,0.03)' }}>
               <tr>
-                {['TC_ID', 'Scenario', 'BDD / Gherkin Rules', 'Type', 'Actions'].map(h => (
+                {['TC_ID', 'Scenario', 'Steps', 'Type', 'Expected Result', 'Actual Result', 'Actions'].map(h => (
                   <th key={h} style={{ padding: '0.9rem 1rem', textAlign: 'left', color: '#818cf8', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -210,7 +258,20 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
                           <textarea value={editFormData.Gherkin || ''} onChange={e => setEditFormData({...editFormData, Gherkin: e.target.value})} style={{ width: '100%', minWidth: '250px', padding: '0.4rem', fontSize: '0.8rem', minHeight: '100px', fontFamily: 'monospace' }} />
                         </td>
                         <td style={{ padding: '0.9rem 1rem' }}>
-                          <input type="text" value={editFormData.Type || ''} onChange={e => setEditFormData({...editFormData, Type: e.target.value})} style={{ width: '100px', padding: '0.4rem', fontSize: '0.8rem' }} />
+                          <select value={editFormData.Type || ''} onChange={e => setEditFormData({...editFormData, Type: e.target.value})} style={{ width: '120px', padding: '0.4rem', fontSize: '0.8rem', background: '#0f172a', color: '#f8fafc', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}>
+                            <option value="">Select Type</option>
+                            <option value="Happy Path">Happy Path</option>
+                            <option value="Negative">Negative</option>
+                            <option value="Edge Case">Edge Case</option>
+                            <option value="Performance">Performance</option>
+                            <option value="Security">Security</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '0.9rem 1rem' }}>
+                          <textarea value={editFormData.Expected_Result || ''} onChange={e => setEditFormData({...editFormData, Expected_Result: e.target.value})} style={{ width: '100%', minWidth: '150px', padding: '0.4rem', fontSize: '0.8rem', minHeight: '60px' }} />
+                        </td>
+                        <td style={{ padding: '0.9rem 1rem' }}>
+                          <textarea value={editFormData.Actual_Result || ''} onChange={e => setEditFormData({...editFormData, Actual_Result: e.target.value})} style={{ width: '100%', minWidth: '150px', padding: '0.4rem', fontSize: '0.8rem', minHeight: '60px' }} placeholder="Blank" />
                         </td>
                         <td style={{ padding: '0.9rem 1rem', whiteSpace: 'nowrap' }}>
                           <button onClick={() => handleSaveRow(i)} style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', background: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', marginRight: '0.5rem' }}>Save</button>
@@ -231,8 +292,14 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
                             color: tc.Type?.toLowerCase().includes('negative') ? '#f87171' : '#4ade80',
                             border: `1px solid ${tc.Type?.toLowerCase().includes('negative') ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)'}`
                           }}>
-                            {tc.Type}
+                            {tc.Type || 'Unassigned'}
                           </span>
+                        </td>
+                        <td style={{ padding: '0.9rem 1rem', color: '#cbd5e1', fontSize: '0.85rem' }}>
+                          {tc.Expected_Result || '-'}
+                        </td>
+                        <td style={{ padding: '0.9rem 1rem', color: '#cbd5e1', fontSize: '0.85rem' }}>
+                          {tc.Actual_Result || ''}
                         </td>
                         <td style={{ padding: '0.9rem 1rem', display: 'flex', gap: '0.4rem' }}>
                            <button onClick={() => handleEditRow(i, tc)} title="Edit" style={{ padding: '0.4rem', background: 'rgba(255,255,255,0.05)', fontSize: '0.9rem', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
@@ -248,69 +315,6 @@ const TestCasePage = ({ story, credentials, onBack, onGoToAutomation }) => {
         </div>
       )}
 
-      {/* AUTO ON: Show script below */}
-      {autoGenerate && (
-        <div ref={scriptRef} className="glass-card animate-fade-in" style={{ borderTop: '2px solid #6366f1', marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <div>
-              <h3 className="title-gradient" style={{ margin: 0 }}>Playwright Script</h3>
-              <p style={{ color: '#64748b', fontSize: '0.8rem', margin: '0.25rem 0 0' }}>Auto-generated from your test cases</p>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button 
-                onClick={handleCopyScript} 
-                title="Copy Code"
-                style={{ width: 'auto', padding: '0.4rem 0.8rem', background: 'rgba(255,255,255,0.05)', fontSize: '1.25rem', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px' }}
-                disabled={!script}
-              >
-                {copiedScript ? '✅' : '📋'}
-              </button>
-              <button onClick={handleGenerateScript} className="secondary-btn" disabled={isGeneratingScript}>
-                {isGeneratingScript ? '⏳ Generating...' : '↺ Regenerate'}
-              </button>
-            </div>
-          </div>
-
-          {isGeneratingScript ? (
-            <div style={{ height: '250px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '1rem' }}>
-              <div className="spinner"></div>
-              <p style={{ color: '#94a3b8' }}>Generating Playwright script...</p>
-            </div>
-          ) : (
-            <textarea
-              value={script}
-              onChange={e => setScript(e.target.value)}
-              spellCheck="false"
-              style={{
-                width: '100%', height: '420px', background: '#0f172a', color: '#38bdf8',
-                fontFamily: 'monospace', padding: '1.5rem', borderRadius: '12px',
-                border: '1px solid #1e293b', fontSize: '0.85rem', resize: 'vertical', outline: 'none'
-              }}
-              placeholder="Script will appear here automatically..."
-            />
-          )}
-        </div>
-      )}
-
-      {/* AUTO OFF: Show button to navigate to Automation page */}
-      {!autoGenerate && testCases.length > 0 && (
-        <div style={{ textAlign: 'center', paddingTop: '1rem' }}>
-          <button
-            onClick={onGoToAutomation}
-            style={{
-              padding: '1.2rem 3rem', fontSize: '1.1rem',
-              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-              boxShadow: '0 10px 25px -5px rgba(99,102,241,0.4)',
-              borderRadius: '14px', transition: 'transform 0.2s'
-            }}
-            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-          >
-            Generate Automation Script →
-          </button>
-          <p style={{ color: '#64748b', fontSize: '0.8rem', marginTop: '0.75rem' }}>Opens the Automation IDE with script editor & terminal</p>
-        </div>
-      )}
     </div>
   )
 }

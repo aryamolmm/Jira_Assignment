@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { KeyRound, Link as LinkIcon, Mail, ShieldCheck } from 'lucide-react'
+
+const JIRA_CREDS_KEY = 'testpilot_jira_creds'
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
@@ -10,11 +12,24 @@ const Login = ({ onLogin }) => {
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // Auto-fill saved Jira credentials
+  useEffect(() => {
+    const saved = localStorage.getItem(JIRA_CREDS_KEY)
+    if (saved) {
+      try {
+        const { baseUrl, email } = JSON.parse(saved)
+        setFormData(prev => ({ ...prev, baseUrl: baseUrl || prev.baseUrl, email: email || prev.email }))
+      } catch {}
+    }
+  }, [])
+
   const handleSubmit = (e) => {
     e.preventDefault()
     setIsSubmitting(true)
-    setTimeout(() => { // Simulate network request
+    setTimeout(() => {
       if (formData.baseUrl && formData.email && formData.token) {
+        // Save Jira URL + email (NOT token for security)
+        localStorage.setItem(JIRA_CREDS_KEY, JSON.stringify({ baseUrl: formData.baseUrl, email: formData.email }))
         onLogin(formData)
       }
       setIsSubmitting(false)
@@ -37,7 +52,7 @@ const Login = ({ onLogin }) => {
           <ShieldCheck color="white" size={32} />
         </motion.div>
         
-        <h1 className="title-gradient" style={{ margin: '0 0 0.5rem', fontSize: '2rem' }}>TestPilot AI</h1>
+        <h1 className="title-gradient" style={{ margin: '0 0 0.5rem', fontSize: '2rem' }}>Jira QA Assistant</h1>
         <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.95rem' }}>
           Connect your workspace to begin autonomous QA capabilities.
         </p>
@@ -75,7 +90,7 @@ const Login = ({ onLogin }) => {
 
         <div>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '1rem 0 0.5rem' }}>
-            <KeyRound size={14} /> Security Token
+            <KeyRound size={14} /> Jira API Token
           </label>
           <input 
             type="password" 
@@ -99,7 +114,7 @@ const Login = ({ onLogin }) => {
             boxShadow: '0 4px 15px rgba(79, 70, 229, 0.4)'
           }}
         >
-          {isSubmitting ? 'Authenticating...' : 'Initialize TestPilot'}
+          {isSubmitting ? 'Authenticating...' : 'Connect to Jira'}
         </motion.button>
       </form>
     </motion.div>

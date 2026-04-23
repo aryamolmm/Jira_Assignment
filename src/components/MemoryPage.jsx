@@ -29,7 +29,7 @@ const MemoryPage = () => {
         <div style={{ background: 'rgba(236, 72, 153, 0.2)', padding: '0.6rem', borderRadius: '12px' }}>
           <Brain size={24} color="#ec4899" />
         </div>
-        <h2 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>AI Memory</h2>
+        <h2 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>QA Knowledge Base</h2>
       </div>
 
       <p style={{ color: '#94a3b8', lineHeight: '1.6', marginBottom: '2rem', maxWidth: '800px' }}>
@@ -70,7 +70,7 @@ const MemoryPage = () => {
           <Sparkles size={14} color="#f59e0b" />
           <span>Context Active</span>
           <span style={{ margin: '0 0.5rem', opacity: 0.3 }}>•</span>
-          <span>Autosaver enabled</span>
+          <span>Safe Sync active</span>
         </div>
       </div>
 

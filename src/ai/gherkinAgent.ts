@@ -3,14 +3,14 @@ import { groq, GROQ_MODEL } from "./groqClient.ts";
 /**
  * Gherkin Generation Agent
  * 
- * Converts a feature description into structured BDD scenarios.
+ * Converts a feature description into structured BDD testcases.
  */
 export async function generateGherkin(featureDescription: string): Promise<{ gherkin: string }> {
   const systemPrompt = `
     You are a Gherkin Generation Agent.
     
     Your task:
-    - Convert feature into structured BDD scenarios (Feature: ... Scenario: ... Given When Then)
+    - Convert feature into structured BDD testcases (Feature: ... Scenario: ... Given When Then)
     - Cover main flow + edge cases
     
     Rules:

@@ -13,8 +13,8 @@ const History = ({ historyList, onViewStory }) => {
           <HistoryIcon size={24} color="white" />
         </div>
         <div>
-          <h1 className="title-gradient" style={{ margin: 0, fontSize: '1.5rem' }}>Generation History</h1>
-          <p style={{ color: '#94a3b8', margin: '0.2rem 0 0', fontSize: '0.85rem' }}>Previously analyzed features & stories</p>
+          <h1 className="title-gradient" style={{ margin: 0, fontSize: '1.5rem' }}>Fetched Story Archive</h1>
+          <p style={{ color: '#94a3b8', margin: '0.2rem 0 0', fontSize: '0.85rem' }}>Your historical QA generation logs</p>
         </div>
       </header>
 
