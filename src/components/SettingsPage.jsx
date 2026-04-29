@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Settings, Key, CheckCircle, Cpu, Save, Eye, EyeOff, Trash2 } from 'lucide-react'
+import { Settings, Key, CheckCircle, Cpu, Save, Eye, EyeOff, Trash2, Database } from 'lucide-react'
+import { getQMetrySettings, saveQMetrySettings } from '../services/settingsService'
+import { testQMetryConnection } from '../services/qmetryService'
 
 export const ENGINES = [
   {
@@ -62,6 +64,11 @@ const SettingsPage = ({ credentials, onUpdateCredentials }) => {
   const [activeEngine, setActiveEngine] = useState(credentials?.engine || 'gemini')
   const [showKey, setShowKey] = useState({})
   const [saved, setSaved] = useState(false)
+  
+  // QMetry State
+  const [qmetrySettings, setQmetrySettings] = useState({ qmetryBaseUrl: '', apiToken: '', projectId: '' })
+  const [qmetryTestStatus, setQmetryTestStatus] = useState(null)
+  const [testingQmetry, setTestingQmetry] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -73,11 +80,20 @@ const SettingsPage = ({ credentials, onUpdateCredentials }) => {
       } catch {}
     }
     if (credentials?.engine) setActiveEngine(credentials.engine)
+    
+    // Load QMetry settings
+    const qSettings = getQMetrySettings()
+    if (qSettings) {
+      setQmetrySettings(qSettings)
+    }
   }, [])
 
   const handleSave = () => {
     const toStore = { ...apiKeys, _activeEngine: activeEngine }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
+    
+    // Save QMetry settings
+    saveQMetrySettings(qmetrySettings)
     
     // Sync all keys to the parent credentials state
     onUpdateCredentials({ 
@@ -93,8 +109,29 @@ const SettingsPage = ({ credentials, onUpdateCredentials }) => {
     setTimeout(() => setSaved(false), 2500)
   }
 
+  const handleDeleteQMetry = () => {
+    const emptySettings = { qmetryBaseUrl: '', apiToken: '', projectId: '' };
+    setQmetrySettings(emptySettings);
+    saveQMetrySettings(emptySettings);
+    setQmetryTestStatus(null);
+  }
+
+  const handleTestQMetry = async () => {
+    setTestingQmetry(true)
+    setQmetryTestStatus(null)
+    try {
+      await testQMetryConnection(qmetrySettings)
+      setQmetryTestStatus({ success: true, message: 'Connection successful!' })
+    } catch (err) {
+      setQmetryTestStatus({ success: false, message: err.message || 'Connection failed' })
+    } finally {
+      setTestingQmetry(false)
+    }
+  }
+
   const toggleShow = (id) => setShowKey(prev => ({ ...prev, [id]: !prev[id] }))
   const clearKey = (id) => setApiKeys(prev => ({ ...prev, [id]: '' }))
+
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '4rem' }}>
@@ -196,6 +233,105 @@ const SettingsPage = ({ credentials, onUpdateCredentials }) => {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* QMetry Settings */}
+      <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+        <h3 style={{ margin: '0 0 1.2rem', color: '#e2e8f0', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <Database size={18} style={{ color: '#10b981' }} /> QMetry Integration Settings
+        </h3>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#94a3b8', marginBottom: '0.4rem' }}>QMetry Base URL</label>
+            <input 
+              type="text" 
+              value={qmetrySettings.qmetryBaseUrl} 
+              onChange={e => setQmetrySettings(prev => ({ ...prev, qmetryBaseUrl: e.target.value }))}
+              placeholder="e.g. https://qtmcloud.qmetry.com"
+              style={{ width: '100%', padding: '0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white', fontSize: '0.9rem', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.3rem' }}>For QMetry for Jira Cloud, use <strong>https://qtmcloud.qmetry.com</strong></div>
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#94a3b8', marginBottom: '0.4rem' }}>API Token</label>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Key size={13} style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} />
+                <input 
+                  type={showKey['qmetry'] ? 'text' : 'password'}
+                  value={qmetrySettings.apiToken} 
+                  onChange={e => setQmetrySettings(prev => ({ ...prev, apiToken: e.target.value }))}
+                  placeholder="Bearer Token"
+                  style={{ margin: 0, width: '100%', fontFamily: 'monospace', fontSize: '0.83rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white', padding: '0.75rem 0.75rem 0.75rem 2.2rem', boxSizing: 'border-box' }}
+                />
+              </div>
+              <button 
+                onClick={() => toggleShow('qmetry')}
+                title={showKey['qmetry'] ? 'Hide' : 'Show'}
+                style={{ width: '42px', height: '42px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#94a3b8', flexShrink: 0, boxSizing: 'border-box' }}
+              >
+                {showKey['qmetry'] ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#94a3b8', marginBottom: '0.4rem' }}>Project ID (Optional)</label>
+            <input 
+              type="text" 
+              value={qmetrySettings.projectId} 
+              onChange={e => setQmetrySettings(prev => ({ ...prev, projectId: e.target.value }))}
+              placeholder="e.g. 10452"
+              style={{ width: '100%', padding: '0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white', fontSize: '0.9rem' }}
+            />
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+            <button 
+              onClick={handleTestQMetry} 
+              disabled={testingQmetry || !qmetrySettings.qmetryBaseUrl || !qmetrySettings.apiToken}
+              style={{ 
+                padding: '0.6rem 1.2rem', 
+                background: 'rgba(16, 185, 129, 0.15)', 
+                border: '1px solid rgba(16, 185, 129, 0.3)', 
+                color: '#10b981', 
+                borderRadius: '8px', 
+                fontWeight: 600,
+                cursor: (testingQmetry || !qmetrySettings.qmetryBaseUrl || !qmetrySettings.apiToken) ? 'not-allowed' : 'pointer',
+                opacity: (testingQmetry || !qmetrySettings.qmetryBaseUrl || !qmetrySettings.apiToken) ? 0.6 : 1
+              }}
+            >
+              {testingQmetry ? 'Testing...' : 'Test Connection'}
+            </button>
+            
+            <button 
+              onClick={handleDeleteQMetry} 
+              title="Delete QMetry Integration Settings"
+              style={{ 
+                padding: '0.6rem 1.2rem', 
+                background: 'rgba(239, 68, 68, 0.08)', 
+                border: '1px solid rgba(239, 68, 68, 0.2)', 
+                color: '#ef4444', 
+                borderRadius: '8px', 
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <Trash2 size={16} /> Delete Integration
+            </button>
+            
+            {qmetryTestStatus && (
+              <span style={{ fontSize: '0.85rem', color: qmetryTestStatus.success ? '#10b981' : '#ef4444' }}>
+                {qmetryTestStatus.success ? '✓ ' : '✗ '}{qmetryTestStatus.message}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Save */}

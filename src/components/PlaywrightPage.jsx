@@ -38,6 +38,12 @@ const PlaywrightPage = ({ story, credentials, onBack, onGoToDashboard }) => {
     initScript()
   }, [])
 
+  useEffect(() => {
+    if (script && story?.id) {
+      localStorage.setItem(`testpilot_script_${story.id}`, script)
+    }
+  }, [script, story?.id])
+
   const handleApplySettings = async () => {
     setIsGenerating(true)
     try {

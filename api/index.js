@@ -1,11 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import { exec } from 'child_process';
-import { writeFile, mkdir, readFile } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { exec, spawn } from 'child_process';
+import { writeFile, mkdir, readFile, unlink } from 'fs/promises';
+import { existsSync, createReadStream, watch } from 'fs';
+import { chromium } from 'playwright';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
+import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -15,9 +17,12 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const MEMORY_FILE = join(__dirname, '..', 'memory.json');
+const EXECUTIONS_FILE = join(__dirname, '..', 'executions.json');
 
 const app = express();
 const PORT = 3001;
+
+const activeProcesses = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -586,7 +591,7 @@ async function callAI(engine, apiKey, prompt) {
     if (resolvedEngine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: prompt + "\n\nIMPORTANT: You must respond in valid JSON format." }],
         temperature: 0.1,
         response_format: { type: 'json_object' }
       }, {
@@ -703,27 +708,12 @@ app.post('/api/agent/super/run', async (req, res) => {
     }
 
     // If REUSE and high confidence — serve directly from memory
+    /* High confidence reuse disabled to ensure fresh data extraction for credentials */
+    /*
     if (memory_action === 'reuse' && bestMatch) {
-      log('Orchestrator', null, 'High confidence reuse — serving cached pipeline outputs', 'bypass');
-      return res.json({
-        memory: { used_memory, memory_action, memory_summary, similarity_score: bestScore },
-        execution_trace: executionTrace,
-        pipeline_steps: [
-          { step: 1, agent: 'ArchitectAgent', tool: 'generate_gherkin', status: 'reused', output: bestMatch.gherkin },
-          { step: 2, agent: 'AutomationAgent', tool: 'generate_test_cases', status: 'reused', output: bestMatch.testCode },
-          { step: 3, agent: 'CoverageAgent', tool: 'analyze_coverage', status: 'reused', output: bestMatch.coverage },
-          { step: 4, agent: 'ReworkAgent', tool: 'improve_test_cases', status: 'bypassed', output: null }
-        ],
-        final_output: {
-          gherkin: bestMatch.gherkin,
-          testCode: bestMatch.testCode,
-          coverage: bestMatch.coverage,
-          improvedTestCode: null
-        },
-        status: 'completed',
-        total_ms: Date.now() - startTime
-      });
+      ...
     }
+    */
 
     // ── Step 1: ArchitectAgent → generate_gherkin ─────────────────────────
     log('ArchitectAgent', 'generate_gherkin', 'Calling tool: generate_gherkin — generating BDD scenarios...', 'running');
@@ -738,7 +728,8 @@ Your task:
 - Cover happy path + edge cases + negative scenarios
 - Include at least 4 scenarios
 
-Rules:
+CRITICAL RULES:
+- PRESERVE EXACT DATA: If the user provides a specific URL, username, or password, YOU MUST INCLUDE THESE EXACT VALUES in the Gherkin steps. Do not generalize them to "valid credentials" if specific ones are given.
 - Use strict Given / When / Then / And format
 - Use realistic, testable steps
 - Return ONLY valid JSON: { "gherkin": "..." }`;
@@ -753,20 +744,82 @@ Rules:
     // ── Step 2: AutomationAgent → generate_test_cases ─────────────────────
     log('AutomationAgent', 'generate_test_cases', 'Calling tool: generate_test_cases — creating Playwright scripts...', 'running');
 
-    const testPrompt = `You are a Playwright Test Generation Agent (AutomationAgent).
-${memCtx}
+    const testPrompt = `
+You are an expert QA automation engineer using Playwright.
+Your task is to convert manual test cases into robust, executable Playwright automation scripts.
+
+---------------------------------------
+USER INSTRUCTIONS & CONTEXT
+---------------------------------------
+These instructions were entered by the user through the application. 
+THEY MAY CONTAIN THE URL, CREDENTIALS, AND SPECIFIC UI HINTS.
+
+User Input: "${input}"
+Additional Context: "${userMemory || 'No additional context provided.'}"
+
+---------------------------------------
+APPLICATION DETAILS (EXTRACT FROM ABOVE)
+---------------------------------------
+1. Application URL: 
+   - Identify the URL from the "USER INSTRUCTIONS & CONTEXT" section above.
+   - If no URL is found, DO NOT GUESS. Use 'about:blank'.
+
+2. Credentials:
+   - Identify username/password from the "USER INSTRUCTIONS & CONTEXT" section above.
+   - If no credentials are found, DO NOT GUESS. State that credentials are missing in the comments.
+
+---------------------------------------
+TEST INPUT (GHERKIN)
+---------------------------------------
+Test Case Name: Generated Test Suite for ${input.substring(0, 50)}...
+
 Gherkin Scenarios:
 ${gherkin}
 
-Your task:
-- Convert ALL Gherkin scenarios into complete Playwright TypeScript test scripts
-- Target application: https://www.saucedemo.com/ (username: standard_user, password: secret_sauce)
+---------------------------------------
+INSTRUCTIONS FOR THE AGENT
+---------------------------------------
 
-Rules:
-- Use @playwright/test imports and test() / expect() syntax
-- Map each Scenario to exactly one test() block
-- Include proper assertions
-- Return ONLY valid JSON: { "test_code": "..." }`;
+1. APPLICATION HANDLING
+- Navigate to the Application URL identified above.
+- Dynamically explore the UI using the provided credentials.
+- Do NOT assume any fixed selectors; rely on visible text, roles, and labels.
+
+2. LOCATOR STRATEGY
+- Prefer getByRole > getByLabel > getByText.
+- Avoid brittle selectors.
+
+3. ACTION MAPPING
+- "Enter / Input" → page.fill()
+- "Click" → page.click()
+- "Select" → page.selectOption()
+- "Navigate" → page.goto()
+
+4. ASSERTIONS
+- Convert expected results into expect() assertions.
+
+5. CODE QUALITY
+- Generate clean, readable TypeScript code.
+- Add meaningful comments for locator choices.
+
+---------------------------------------
+OUTPUT FORMAT
+---------------------------------------
+Generate:
+- A complete Playwright test script (TypeScript)
+- Return ONLY valid JSON in this format: { "test_code": "..." }
+- No explanations, no markdown blocks.
+
+---------------------------------------
+IMPORTANT RULES
+---------------------------------------
+- PRIORITIZE the URL and Credentials found in the "USER INSTRUCTIONS & CONTEXT".
+- DO NOT use hardcoded selectors unless provided in context.
+- ALWAYS adapt to the given application URL.
+- ALWAYS rely on UI exploration.
+
+---------------------------------------
+`;
 
     const testRaw = await callAI(resolvedEngine, resolvedKey, testPrompt);
     const testData = parseAIResponse(testRaw);
@@ -1176,6 +1229,694 @@ app.post('/api/test/run', async (req, res) => {
       res.status(500).json({ error: error.message });
     }
 });
+
+app.get('/api/browse-folder', async (req, res) => {
+  console.log('[Browse] Triggering COM-based Folder Picker...');
+  // Use Shell.Application COM object - very reliable on Windows without extra assembly loads
+  const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(New-Object -ComObject Shell.Application).BrowseForFolder(0, 'Select Playwright Project Folder', 0).Self.Path"`;
+  
+  exec(command, (error, stdout) => {
+    if (error) {
+      console.error('[Browse Error]', error);
+      // Return null instead of 500 to keep the UI stable
+      return res.json({ path: null, error: error.message });
+    }
+    const selectedPath = stdout.toString().trim();
+    console.log(`[Browse Success] Path: "${selectedPath}"`);
+    res.json({ path: selectedPath || null });
+  });
+});
+
+app.post('/api/execute-test', async (req, res) => {
+  const { test_case_id, status, comments, script, manual } = req.body;
+  const startTime = Date.now();
+  let newExecution;
+
+  if (!manual && script) {
+    const target = (req.body.projectPath || process.cwd()).trim();
+    const browser = req.body.browser || 'chromium';
+    const headless = req.body.headless !== false;
+    
+    console.log(`[CLI] Attempting to run in: ${target}`);
+    
+    if (!existsSync(target)) {
+      return res.status(400).json({ error: `Directory not found: ${target}` });
+    }
+
+    const testFileName = `tp_${test_case_id}.spec.ts`;
+    const testFilePath = join(target, testFileName);
+    
+    try {
+      await writeFile(testFilePath, script);
+      const args = ['playwright', 'test', testFileName];
+      if (browser !== 'default') args.push(`--project=${browser}`);
+      if (!headless) args.push('--headed');
+      
+      console.log(`[CLI] Running: ${npxCmd} ${args.join(' ')}`);
+      
+      const testProcess = spawn(npxCmd, args, { 
+        cwd: target, 
+        shell: true,
+        env: { ...process.env, FORCE_COLOR: '1' }
+      });
+      
+      activeProcesses.set(test_case_id, testProcess);
+
+      let stdout = '';
+      let stderr = '';
+
+      testProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+      testProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+      const exitCode = await new Promise((resolve) => {
+        testProcess.on('close', (code) => resolve(code));
+      });
+
+      activeProcesses.delete(test_case_id);
+      const isSuccess = exitCode === 0;
+      
+      newExecution = {
+        id: Date.now().toString(),
+        test_case_id,
+        status: isSuccess ? 'Pass' : 'Fail',
+        output: `> CLI Output:\n${stdout}\n${stderr}`,
+        execution_time: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        manual: false
+      };
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  } else {
+    // Manual logic...
+    newExecution = {
+      id: Date.now().toString(),
+      test_case_id,
+      status: status || 'Pass',
+      comments: comments || (manual ? 'Manual' : 'Auto'),
+      execution_time: Date.now() - startTime,
+      timestamp: new Date().toISOString(),
+      manual: !!manual
+    };
+  }
+
+  // Save to memory and respond
+  let executions = [];
+  if (existsSync(EXECUTIONS_FILE)) {
+    executions = JSON.parse(await readFile(EXECUTIONS_FILE, 'utf-8'));
+  }
+  executions.push(newExecution);
+  await writeFile(EXECUTIONS_FILE, JSON.stringify(executions, null, 2));
+  res.json(newExecution);
+});
+
+app.post('/api/run-suite', async (req, res) => {
+  const { projectPath, browser, headless, source, gitUrl } = req.body;
+  const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  let target = (projectPath || process.cwd()).trim();
+  let log = `> Initializing suite run (Source: ${source || 'local'})\n`;
+
+  try {
+    if (source === 'git' && gitUrl) {
+      log += `> Cloning repository: ${gitUrl}\n`;
+      const cloneDir = join(tmpdir(), `tp_git_${Date.now()}`);
+      if (!existsSync(cloneDir)) await mkdir(cloneDir, { recursive: true });
+      
+      await new Promise((resolve, reject) => {
+        const git = spawn('git', ['clone', gitUrl, '.'], { cwd: cloneDir, shell: true });
+        git.stdout.on('data', (d) => { log += d.toString(); });
+        git.stderr.on('data', (d) => { log += d.toString(); });
+        git.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git clone failed with code ${code}`)));
+      });
+      target = cloneDir;
+      log += `> Clone successful. Target: ${target}\n`;
+    }
+
+    log += `> Running Playwright tests in: ${target}\n`;
+    
+    const args = ['playwright', 'test'];
+    if (browser !== 'default') args.push(`--project=${browser}`);
+    if (!headless) args.push('--headed');
+    
+    log += `> Command: ${npxCmd} ${args.join(' ')}\n\n`;
+
+    const testProcess = spawn(npxCmd, args, { 
+      cwd: target, 
+      shell: true,
+      env: { ...process.env, FORCE_COLOR: '1' }
+    });
+
+    let output = '';
+    testProcess.stdout.on('data', (data) => { output += data.toString(); });
+    testProcess.stderr.on('data', (data) => { output += data.toString(); });
+
+    testProcess.on('close', (code) => {
+      console.log(`[CLI] Suite finished with code ${code}`);
+      res.json({ 
+        status: code === 0 ? 'Pass' : 'Fail', 
+        output: log + output 
+      });
+    });
+
+    testProcess.on('error', (err) => {
+      res.status(500).json({ error: `Failed to start process: ${err.message}`, output: log + output });
+    });
+
+  } catch (err) {
+    console.error('[CLI Suite Error]', err);
+    res.status(500).json({ error: err.message, output: log });
+  }
+});
+
+app.get('/api/execution-results', async (req, res) => {
+  try {
+    if (existsSync(EXECUTIONS_FILE)) {
+      const content = await readFile(EXECUTIONS_FILE, 'utf-8');
+      return res.json(JSON.parse(content));
+    }
+    res.json([]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/execution-results/clear', async (req, res) => {
+  try {
+    await writeFile(EXECUTIONS_FILE, JSON.stringify([]));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── QMetry Integration ────────────────────────────────────────────────────────
+
+const normalizeQMetryUrl = (urlStr) => {
+  let url = urlStr.trim();
+  if (!url.startsWith('http')) url = `https://${url}`;
+  
+  // If user accidentally pastes their Jira Cloud URL (e.g., https://intelligentqaportal.atlassian.net)
+  // or a deep link to the QMetry plugin page, we route it to the official QTM4J Cloud REST API
+  if (url.includes('.atlassian.net') || url.includes('/qtm4j-test-management')) {
+    return 'https://qtmcloud.qmetry.com';
+  }
+  
+  return url.replace(/\/+$/, '');
+};
+
+app.post('/api/qmetry/test', async (req, res) => {
+  const { qmetryBaseUrl, apiToken, projectId } = req.body;
+  if (!qmetryBaseUrl || !apiToken) {
+    return res.status(400).json({ error: 'Missing QMetry Base URL or API Token' });
+  }
+
+  const url = normalizeQMetryUrl(qmetryBaseUrl);
+
+  try {
+    // We will do a dummy POST to /testcases to check auth.
+    // If it returns 401, auth failed. If it returns 400, auth passed but payload is invalid.
+    // A 404 means the base URL is completely wrong.
+    const response = await axios.post(`${url}/rest/api/latest/testcases`, {}, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'apiKey': apiToken,
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json({ success: true, message: 'Connection successful!' });
+  } catch (error) {
+    const status = error.response?.status || 500;
+    
+    if (status === 400 || status === 422 || status === 200 || status === 201) {
+      // If it's a 400 Bad Request, it means the endpoint exists and auth might have passed (or it validates auth after payload, but usually 401 is first).
+      return res.json({ success: true, message: 'Connection verified (Endpoint reachable)' });
+    }
+    
+    if (status === 401 || status === 403) {
+       return res.status(status).json({ error: "Authentication failed. Please check your API Token.", details: error.response?.data });
+    }
+
+    const msg = error.response?.data?.errorMessage || error.response?.data?.error || error.message;
+    res.status(status).json({ error: msg, details: error.response?.data });
+  }
+});
+
+app.post('/api/qmetry/sync', async (req, res) => {
+  const { settings, payload } = req.body;
+  if (!settings || !settings.qmetryBaseUrl || !settings.apiToken) {
+    return res.status(400).json({ error: 'Missing QMetry settings' });
+  }
+
+  const url = normalizeQMetryUrl(settings.qmetryBaseUrl);
+
+  // Add project to payload if defined
+  const requestPayload = { ...payload };
+  if (settings.projectId) {
+    requestPayload.project = { id: parseInt(settings.projectId, 10) || settings.projectId };
+  }
+
+  try {
+    const response = await axios.post(`${url}/rest/api/latest/testcases`, requestPayload, {
+      headers: {
+        'Authorization': `Bearer ${settings.apiToken}`,
+        'apiKey': settings.apiToken,
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    const status = error.response?.status || 500;
+    const msg = error.response?.data?.errorMessage || error.response?.data?.error || error.message;
+    res.status(status).json({ error: msg, details: error.response?.data });
+  }
+});
+
+
+/**
+ * Playwright Browser Tools for the AI Agent
+ */
+const createBrowserTools = async (page) => ({
+  open_url: async ({ url }) => {
+    await page.goto(url, { waitUntil: 'networkidle' });
+    return `Opened URL: ${url}`;
+  },
+  click_element: async ({ selector, description }) => {
+    try {
+      const locator = page.locator(selector).first();
+      await locator.waitFor({ state: 'visible', timeout: 5000 });
+      await locator.click({ timeout: 3000 });
+      return `Clicked element: ${description || selector}`;
+    } catch (err) {
+      // Self-healing: If AI used //button for an <input type="submit">
+      if (selector.includes('//button')) {
+        const alt = selector.replace('//button', '//*[@id="login-button"]' ? '#login-button' : '//input');
+        try {
+          await page.click(alt, { timeout: 3000 });
+          return `Clicked element via fallback: ${alt}`;
+        } catch (e) { /* ignore fallback error */ }
+      }
+      // Try ID fallback if selector looks like an ID
+      if (selector.includes('login-button')) {
+         try {
+           await page.click('#login-button', { timeout: 3000 });
+           return `Clicked element via ID fallback: #login-button`;
+         } catch (e) {}
+      }
+      throw err;
+    }
+  },
+  fill_input: async ({ selector, value, description }) => {
+    const locator = page.locator(selector).first();
+    await locator.waitFor({ state: 'visible', timeout: 8000 });
+    await locator.fill(value);
+    return `Filled "${value}" into ${description || selector}`;
+  },
+  wait_for_element: async ({ selector, timeout = 5000 }) => {
+    await page.waitForSelector(selector, { state: 'visible', timeout });
+    return `Element visible: ${selector}`;
+  },
+  take_screenshot: async ({ step_id }) => {
+    const filename = `screenshot_${step_id}_${Date.now()}.png`;
+    const recDir = join(__dirname, '..', 'recordings');
+    if (!existsSync(recDir)) await mkdir(recDir, { recursive: true });
+    const path = join(recDir, filename);
+    await page.screenshot({ path });
+    return { filename, message: 'Screenshot captured' };
+  },
+  get_page_info: async () => {
+    const title = await page.title();
+    const url = page.url();
+    const elements = await page.evaluate(() => {
+      const interactives = Array.from(document.querySelectorAll('button, input, a, select, [role="button"]'));
+      return interactives.map(el => ({
+        tag: el.tagName,
+        text: el.innerText || el.value || '',
+        id: el.id || '',
+        name: el.name || '',
+        placeholder: el.placeholder || '',
+        class: el.className || '',
+        type: el.type || '',
+        best_selector: el.id ? `#${el.id}` : (el.name ? `[name="${el.name}"]` : '')
+      })).slice(0, 40);
+    });
+    return { title, url, interactives: elements };
+  },
+  get_url: async () => {
+    return { url: page.url() };
+  },
+  wait_for_selector: async ({ selector, timeout = 5000 }) => {
+    await page.waitForSelector(selector, { timeout });
+    return `Element ${selector} is now present`;
+  },
+  assert_text: async ({ text }) => {
+    const url = page.url();
+    if (text.startsWith('http') && url.includes(text)) {
+        return `Assertion Passed: Current URL (${url}) matches/contains "${text}"`;
+    }
+    const content = await page.content();
+    const found = content.includes(text);
+    if (!found) throw new Error(`Assertion Failed: Text "${text}" not found on page`);
+    return `Assertion Passed: Text "${text}" is present`;
+  },
+  locate_element: async ({ selector, description }) => {
+    const locator = page.locator(selector).first();
+    await locator.waitFor({ state: 'attached', timeout: 8000 });
+    const isVisible = await locator.isVisible();
+    return `Element ${description || selector} found. Visible: ${isVisible}`;
+  },
+  // Aliases for better resilience
+  click: async (args) => tools.click_element(args),
+  type: async (args) => tools.fill_input(args),
+  open: async (args) => tools.open_url(args),
+  wait: async (args) => tools.wait_for_selector(args),
+  check: async (args) => tools.locate_element(args),
+  playwright: async (args) => tools.open_url(args),
+  sleep: async ({ ms }) => new Promise(r => setTimeout(r, ms || 3000))
+});
+
+const AGENT_TOOLS = [
+  {
+    name: "open_url",
+    description: "Navigate to a specific URL",
+    parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
+  },
+  {
+    name: "click_element",
+    description: "Click an element using a CSS selector or text-based selector",
+    parameters: { type: "object", properties: { selector: { type: "string" }, description: { type: "string" } }, required: ["selector"] }
+  },
+  {
+    name: "fill_input",
+    description: "Fill a form field or input with text",
+    parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" }, description: { type: "string" } }, required: ["selector", "value"] }
+  },
+  {
+    name: "take_screenshot",
+    description: "Capture a screenshot of the current browser state",
+    parameters: { type: "object", properties: { step_id: { type: "string" } }, required: ["step_id"] }
+  },
+  {
+    name: "get_page_info",
+    description: "Get metadata about the current page including title, URL and list of interactive elements",
+    parameters: { type: "object", properties: {} }
+  },
+  {
+    name: "get_url",
+    description: "Get the current browser URL",
+    parameters: { type: "object", properties: {} }
+  },
+  {
+    name: "wait_for_selector",
+    description: "Wait for a specific element to appear on the page",
+    parameters: { type: "object", properties: { selector: { type: "string" }, timeout: { type: "number" } }, required: ["selector"] }
+  },
+  {
+    name: "locate_element",
+    description: "Locate an element and check if it exists in the DOM",
+    parameters: { type: "object", properties: { selector: { type: "string" }, description: { type: "string" } }, required: ["selector"] }
+  },
+  {
+    name: "click",
+    description: "Alias for click_element",
+    parameters: { type: "object", properties: { selector: { type: "string" } } }
+  },
+  {
+    name: "type",
+    description: "Alias for fill_input",
+    parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" } } }
+  },
+  {
+    name: "sleep",
+    description: "Wait for a few seconds",
+    parameters: { type: "object", properties: { ms: { type: "number" } } }
+  },
+  {
+    name: "assert_text",
+    description: "Assert that specific text or a URL is present",
+    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] }
+  }
+];
+
+// ── AI AGENT EXECUTION SYSTEM 2.0 (STREAMING) ────────────────────
+
+const executionStreams = new Map();
+
+app.get('/api/agent-stream/:executionId', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const { executionId } = req.params;
+  executionStreams.set(executionId, res);
+  req.on('close', () => { executionStreams.delete(executionId); });
+});
+
+const sendAgentUpdate = (id, data) => {
+  const res = executionStreams.get(id);
+  if (res) res.write(`data: ${JSON.stringify(data)}\n\n`);
+};
+
+app.post('/api/agent-execute', async (req, res) => {
+  const { test_case_id, steps, headless = true, engine = 'groq', contextCode = '', userInstructions = '', credentials = {} } = req.body;
+  const executionId = uuidv4();
+  runAgentExecution(executionId, test_case_id, steps, headless, engine, contextCode, userInstructions, credentials);
+  res.json({ executionId });
+});
+
+const runAgentExecution = async (executionId, tcId, steps, headless, engine, contextCode, userInstructions, credentials = {}) => {
+  const browser = await chromium.launch({ headless });
+  const page = await browser.newPage();
+  const tools = await createBrowserTools(page);
+  
+  // Extract credentials from ANY part of the context for global enforcement
+  const allText = userInstructions + " " + steps.join(" ");
+  const userMatch = allText.match(/(?:user|username|user\s+name|login)\s*(?:id|name)?\s*(?:is|as|[:=])\s*([^\s,]+)/i);
+  const passMatch = allText.match(/(?:pass|password|pass\s+word)\s*(?:is|as|[:=])\s*([^\s,]+)/i);
+  
+  const activeUser = userMatch ? (userMatch[1] || userMatch[2]) : null;
+  const activePass = passMatch ? (passMatch[1] || passMatch[2]) : null;
+  const credsBlock = activeUser ? `\n\n### ACTIVE SESSION CREDENTIALS\n- USERNAME: ${activeUser}\n- PASSWORD: ${activePass || 'Check goal for password'}` : '';
+
+  try {
+    // ── Pre-Navigation (Fast Start) ──
+    const urlMatch = allText.match(/https?:\/\/[^\s"']+/);
+    if (urlMatch) {
+        const url = urlMatch[0];
+        const credsInfo = activeUser ? ` (Using: ${activeUser} / ${activePass ? '****' : 'no password detected'})` : '';
+        sendAgentUpdate(executionId, { type: 'OBSERVATION', observation: `Fast-starting: Navigating to ${url}${credsInfo}` });
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    } else {
+        await page.goto('https://www.saucedemo.com/', { waitUntil: 'networkidle' });
+    }
+
+    const useGemini = engine === 'gemini';
+    const useOpenRouter = engine === 'openrouter';
+    
+    // Prioritize keys from frontend credentials object, then environment variables
+    const geminiKey = credentials.geminiKey || process.env.GEMINI_API_KEY;
+    const groqKey = credentials.groqKey || process.env.GROQ_API_KEY;
+    const openRouterKey = credentials.openRouterKey || process.env.OPENROUTER_API_KEY;
+
+    const genAI = useGemini ? new GoogleGenerativeAI(geminiKey) : null;
+    const model = useGemini ? genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      tools: [{ functionDeclarations: AGENT_TOOLS }]
+    }) : null;
+
+    let chat = useGemini ? model.startChat({ history: [] }) : null;
+    
+    // Clean context code to prevent data leakage (keep only selectors/logic)
+    const sanitizedContext = contextCode.replace(/['"]([^'"]+)['"]/g, (match, p1) => {
+        if (p1.includes('.') || p1.includes('#') || p1.includes('//') || p1.length < 3) return match; // Keep selectors
+        return '"[HIDDEN_DATA]"';
+    });
+
+    const contextPrompt = contextCode ? `\n\nREFERENCE CODE (USE FOR SELECTORS ONLY):\n\`\`\`javascript\n${sanitizedContext}\n\`\`\`` : '';
+
+    let externalHistory = [
+      { 
+        role: 'system', 
+        content: `### IDENTITY
+QA Automation Agent. Follow credentials EXACTLY.${credsBlock}
+
+### RULES
+- ALWAYS use the Username/Password from the ACTIVE SESSION CREDENTIALS above.
+- NEVER use placeholders like "username", "admin", "AI_test", or "valid_user".
+- NEVER attempt to bypass login by navigating directly to internal URLs (e.g., /inventory.html) unless specifically instructed. You MUST complete the login form.
+- For login buttons, prioritize ID or Name selectors (e.g., #login-button) over tag-based XPaths like //button.
+- If a selector fails, use 'get_page_info' to see the updated DOM.
+- YOU MUST RESPOND IN VALID JSON FORMAT. THIS IS A MANDATORY REQUIREMENT.
+- Your response MUST be a single JSON object matching one of these two schemas:
+  1. To call a tool: { "tool": "tool_name", "args": { "param1": "value1" } }
+  2. To complete the step: { "done": true, "message": "Step completed successfully" }
+
+### TOOLS
+- open_url(url)
+- click_element(selector, description)
+- fill_input(selector, value, description)
+- get_page_info()
+- assert_text(text)
+
+### PRECONDITION
+Instruction: "${userInstructions}"
+Selectors Hint: ${sanitizedContext.substring(0, 500)}`
+      }
+    ];
+
+    sendAgentUpdate(executionId, { type: 'OBSERVATION', observation: `Agent starting with instruction: "${userInstructions.substring(0, 50)}..."` });
+
+    for (let index = 0; index < steps.length; index++) {
+      const stepText = steps[index];
+      
+      // Artificial delay to prevent rate limiting
+      if (index > 0) await new Promise(r => setTimeout(r, 2000));
+      
+      sendAgentUpdate(executionId, { type: 'STEP_START', index, step: stepText });
+      
+      let stepResolved = false;
+      let lastObservation = `Goal: ${stepText}\n\nWhat is your next tool call? Remember to use the EXACT values from the goal.`;
+
+      for (let i = 0; i < 15; i++) {
+        let name, args;
+
+        if (useGemini) {
+          const result = await chat.sendMessage(lastObservation);
+          const call = result.response.candidates[0].content.parts.find(p => p.functionCall);
+          if (call) {
+            name = call.functionCall.name;
+            args = call.functionCall.args;
+          }
+        } else {
+          const apiConfig = useOpenRouter ? {
+            url: 'https://openrouter.ai/api/v1/chat/completions',
+            key: openRouterKey,
+            model: "deepseek/deepseek-chat"
+          } : {
+            url: 'https://api.groq.com/openai/v1/chat/completions',
+            key: groqKey,
+            model: "llama-3.1-8b-instant"
+          };
+
+          const callLLM = async (retryCount = 0) => {
+            try {
+              return await axios.post(apiConfig.url, {
+                model: apiConfig.model,
+                messages: [...externalHistory, { role: 'user', content: lastObservation }],
+                response_format: { type: "json_object" }
+              }, {
+                headers: { 'Authorization': `Bearer ${apiConfig.key}`, 'Content-Type': 'application/json' }
+              });
+            } catch (err) {
+              if (err.response?.status === 429 && retryCount < 5) {
+                const wait = (retryCount + 1) * 5000;
+                sendAgentUpdate(executionId, { type: 'OBSERVATION', observation: `Rate limit hit. Waiting ${wait/1000}s (Retry ${retryCount+1}/5)...` });
+                await new Promise(r => setTimeout(r, wait));
+                return callLLM(retryCount + 1);
+              }
+              throw err;
+            }
+          };
+
+          const res = await callLLM();
+
+          const extractJSON = (text) => {
+            try {
+              const match = text.match(/[\{\[][\s\S]*[\}\]]/);
+              let parsed = match ? JSON.parse(match[0]) : JSON.parse(text);
+              if (Array.isArray(parsed)) parsed = parsed[0];
+              // Map hallucinated keys if model missed the schema
+              if (parsed.action && !parsed.tool) {
+                parsed.tool = parsed.action;
+                parsed.args = parsed.args || { 
+                  selector: parsed.selector, 
+                  value: parsed.value || parsed.text,
+                  text: parsed.text || parsed.value 
+                };
+              }
+              return parsed;
+            } catch (e) { return null; }
+          };
+
+          const rawContent = res.data.choices[0].message.content;
+          const jsonRes = extractJSON(rawContent);
+          externalHistory.push({ role: 'assistant', content: rawContent });
+          
+          if (!jsonRes) {
+            // LLM failed to return JSON, send observation to correct it
+            lastObservation = `Error: You MUST respond with ONLY valid JSON matching the schema. Your previous response was: ${rawContent}`;
+            sendAgentUpdate(executionId, { type: 'ERROR', error: 'LLM returned invalid JSON. Forcing retry...' });
+            continue; // Skip tool execution and ask LLM again
+          }
+
+          if (jsonRes.tool) {
+            name = jsonRes.tool;
+            args = jsonRes.args;
+          } else if (jsonRes.done) {
+            sendAgentUpdate(executionId, { type: 'STEP_COMPLETE', index });
+            stepResolved = true;
+            break;
+          } else {
+            // Valid JSON, but missing tool or done key
+            lastObservation = `Error: Your JSON must contain either a "tool" key or a "done" key. You provided: ${rawContent}`;
+            sendAgentUpdate(executionId, { type: 'ERROR', error: 'LLM returned JSON without tool or done keys. Forcing retry...' });
+            continue;
+          }
+        }
+        
+        if (name) {
+          sendAgentUpdate(executionId, { type: 'TOOL_CALL', name, args });
+          try {
+            const observation = await tools[name]({ ...args, step_id: `${executionId}_${index}` });
+            const obsText = typeof observation === 'object' ? (observation.message || JSON.stringify(observation)) : observation;
+            if (name === 'take_screenshot') sendAgentUpdate(executionId, { type: 'SCREENSHOT', filename: observation.filename });
+            lastObservation = `Observation: ${obsText}`;
+            sendAgentUpdate(executionId, { type: 'OBSERVATION', observation: obsText });
+            if (!useGemini) externalHistory.push({ role: 'user', content: lastObservation });
+          } catch (toolErr) {
+            lastObservation = `Error: ${toolErr.message}`;
+            sendAgentUpdate(executionId, { type: 'ERROR', error: toolErr.message });
+            if (!useGemini) externalHistory.push({ role: 'user', content: lastObservation });
+          }
+        } else if (useGemini) {
+          // Gemini didn't return a tool call. Let's check what it said.
+          const textPart = result.response.candidates[0].content.parts.find(p => p.text);
+          if (textPart && textPart.text) {
+             const text = textPart.text.toLowerCase();
+             if (text.includes('done') || text.includes('completed') || text.includes('success')) {
+                sendAgentUpdate(executionId, { type: 'STEP_COMPLETE', index });
+                stepResolved = true;
+                break;
+             } else {
+                lastObservation = `Error: You must use a tool call to perform actions, or say you are "done" to complete the step. Your previous message was: ${textPart.text}`;
+                sendAgentUpdate(executionId, { type: 'OBSERVATION', observation: `Agent thought: ${textPart.text.substring(0, 100)}... Forcing tool usage.` });
+             }
+          } else {
+             sendAgentUpdate(executionId, { type: 'STEP_COMPLETE', index });
+             stepResolved = true;
+             break;
+          }
+        }
+      }
+      if (!stepResolved) {
+        sendAgentUpdate(executionId, { type: 'STEP_FAILED', index });
+        sendAgentUpdate(executionId, { type: 'EXECUTION_COMPLETE', status: 'Failed' });
+        return; // Stop execution on failure
+      }
+    }
+    sendAgentUpdate(executionId, { type: 'EXECUTION_COMPLETE', status: 'Success' });
+  } catch (err) {
+    console.error('[Agent Error]', err.response?.data || err.message);
+    sendAgentUpdate(executionId, { type: 'EXECUTION_COMPLETE', status: 'Failed', error: err.message });
+  } finally {
+    if (!headless) {
+        // Keep browser open for 10 seconds so user can see what happened
+        await new Promise(r => setTimeout(r, 10000));
+    }
+    await browser.close();
+  }
+};
+
+app.use('/recordings', express.static(join(__dirname, '..', 'recordings')));
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { LayoutDashboard, History as HistoryIcon, Beaker, Code2, LogOut, Brain, Zap, Settings } from 'lucide-react'
+import { LayoutDashboard, History as HistoryIcon, Beaker, Code2, LogOut, Brain, Zap, Settings, Play, Shield, Terminal, BarChart3 } from 'lucide-react'
 
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
@@ -10,6 +10,9 @@ import History from './components/History'
 import MemoryPage from './components/MemoryPage'
 import SuperAgent from './components/SuperAgent'
 import SettingsPage from './components/SettingsPage'
+import ExecutionPage from './components/ExecutionPage'
+import ManualExecutionPage from './components/ManualExecutionPage'
+import ExecutionReport from './components/ExecutionReport'
 
 const SESSION_KEY = 'testpilot_session'
 const API_KEYS_KEY = 'testpilot_api_keys'
@@ -32,7 +35,6 @@ function App() {
         const elapsed = Date.now() - lastActive
         if (elapsed < INACTIVITY_MS) {
           // Merge saved API keys into credentials
-          // Merge ALL saved API keys into credentials
           const savedKeys = JSON.parse(localStorage.getItem(API_KEYS_KEY) || '{}')
           setCredentials({ 
             ...creds, 
@@ -191,17 +193,21 @@ function App() {
           <p style={{ color: '#64748b', fontSize: '0.75rem', margin: '0.2rem 0 0', textTransform: 'uppercase', letterSpacing: '1px' }}>Jira Story Fetcher & AI Generator</p>
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto', paddingRight: '0.5rem' }}>
           <SidebarButton active={activeTab === 'dashboard'} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => setActiveTab('dashboard')} />
           <SidebarButton active={activeTab === 'super'} icon={<Zap size={18} />} label="AI Generator" onClick={() => setActiveTab('super')} />
           <SidebarButton active={activeTab === 'history'} icon={<HistoryIcon size={18} />} label="History" onClick={() => setActiveTab('history')} />
           <SidebarButton active={activeTab === 'memory'} icon={<Brain size={18} />} label="AI Memory" onClick={() => setActiveTab('memory')} />
           <SidebarButton active={activeTab === 'settings'} icon={<Settings size={18} />} label="Settings" onClick={() => setActiveTab('settings')} />
 
-          <div style={{ margin: '1.5rem 0 0.5rem', fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Active Session</div>
-
+          <div style={{ margin: '1.5rem 0 0.5rem', fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Generator Session</div>
           <SidebarButton active={activeTab === 'qa'} disabled={!currentStory} icon={<Beaker size={18} />} label="BDD Testcases" onClick={() => currentStory && setActiveTab('qa')} />
           <SidebarButton active={activeTab === 'automation'} disabled={!currentStory} icon={<Code2 size={18} />} label="Automation Scripts" onClick={() => currentStory && setActiveTab('automation')} />
+
+          <div style={{ margin: '1.5rem 0 0.5rem', fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Execution Session</div>
+          <SidebarButton active={activeTab === 'manual_exec'} disabled={!currentStory} icon={<Shield size={18} />} label="Manual Execution" onClick={() => currentStory && setActiveTab('manual_exec')} />
+          <SidebarButton active={activeTab === 'auto_exec'} disabled={!currentStory} icon={<Play size={18} />} label="Execution Console" onClick={() => currentStory && setActiveTab('auto_exec')} />
+          <SidebarButton active={activeTab === 'exec_report'} icon={<BarChart3 size={18} />} label="Execution Report" onClick={() => setActiveTab('exec_report')} />
         </nav>
 
         {/* Active engine badge */}
@@ -253,6 +259,9 @@ function App() {
               onGoToDashboard={backToDashboard}
             />
           )}
+          {activeTab === 'manual_exec' && currentStory && <ManualExecutionPage story={currentStory} />}
+          {activeTab === 'auto_exec' && currentStory && <ExecutionPage story={currentStory} credentials={credentials} />}
+          {activeTab === 'exec_report' && <ExecutionReport />}
         </div>
       </main>
     </div>
