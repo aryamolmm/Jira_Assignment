@@ -4,7 +4,7 @@ import axios from 'axios';
 import { exec, spawn } from 'child_process';
 import { writeFile, mkdir, readFile, unlink } from 'fs/promises';
 import { existsSync, createReadStream, watch } from 'fs';
-import { chromium } from 'playwright';
+
 import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
@@ -1684,6 +1684,7 @@ app.post('/api/agent-execute', async (req, res) => {
 });
 
 const runAgentExecution = async (executionId, tcId, steps, headless, engine, contextCode, userInstructions, credentials = {}) => {
+  const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless });
   const page = await browser.newPage();
   const tools = await createBrowserTools(page);
