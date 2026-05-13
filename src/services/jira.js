@@ -46,7 +46,16 @@ export const fetchUserStory = async (baseUrl, email, token, storyId) => {
     
     if (error.response?.data) {
       const data = error.response.data;
-      if (data.errorMessages && Array.isArray(data.errorMessages) && data.errorMessages.length > 0) {
+      if (data.details) {
+        const details = data.details;
+        if (details.errorMessages && details.errorMessages.length > 0) {
+          message = details.errorMessages[0];
+        } else if (details.message) {
+          message = typeof details.message === 'object' ? JSON.stringify(details.message) : details.message;
+        } else if (data.error) {
+          message = data.error;
+        }
+      } else if (data.errorMessages && Array.isArray(data.errorMessages) && data.errorMessages.length > 0) {
         message = data.errorMessages[0];
       } else if (data.message) {
         message = typeof data.message === 'object' ? JSON.stringify(data.message) : data.message;

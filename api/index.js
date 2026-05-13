@@ -27,6 +27,11 @@ const activeProcesses = new Map();
 app.use(cors());
 app.use(express.json());
 
+// Health check endpoint
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), env: process.env.NODE_ENV || 'development' });
+});
+
 // ─── Memory Agent Helpers ────────────────────────────────────────────────────
 
 function tokenize(s) {
@@ -969,12 +974,20 @@ app.post('/api/jira/fetch', async (req, res) => {
       headers: {
         'Authorization': `Basic ${authHeader}`,
         'Accept': 'application/json'
-      }
+      },
+      timeout: 10000 // 10s timeout
     });
     res.json(response.data);
   } catch (error) {
+    console.error('Jira Proxy Error:', error.response?.status, error.message);
     const status = error.response?.status || 500;
-    res.status(status).json(error.response?.data || { error: error.message });
+    const errorData = error.response?.data;
+    
+    res.status(status).json({
+      error: error.message,
+      details: errorData || 'No additional details from Jira',
+      proxy_status: status
+    });
   }
 });
 
