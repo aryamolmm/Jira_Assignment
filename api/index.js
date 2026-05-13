@@ -892,7 +892,7 @@ Return ONLY valid JSON: { "improved_test_code": "..." }`;
       const reworkData = parseAIResponse(reworkRaw);
       const rawImproved = reworkData.improved_test_code;
       if (Array.isArray(rawImproved)) {
-        improvedTestCode = rawImproved.join('\n');
+        improvedTestCode = rawImproved.map(item => typeof item === 'object' ? JSON.stringify(item, null, 2) : String(item)).join('\n');
       } else if (rawImproved && typeof rawImproved === 'object') {
         improvedTestCode = JSON.stringify(rawImproved, null, 2);
       } else {
