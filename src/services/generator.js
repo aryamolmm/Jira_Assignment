@@ -25,7 +25,8 @@ export const generateTestCasesAI = async (story, apiKey, engine = 'gemini', type
   } catch (error) {
     console.error('Agent 1 Error:', error);
     const backendError = error.response?.data?.error;
-    throw new Error(backendError || 'QA Engine failed to parse Jira story.');
+    const message = typeof backendError === 'object' ? (backendError.message || JSON.stringify(backendError)) : (backendError || error.message);
+    throw new Error(message || 'QA Engine failed to parse Jira story.');
   }
 };
 

@@ -21,6 +21,7 @@ const EXECUTIONS_FILE = join(__dirname, '..', 'executions.json');
 
 const app = express();
 const PORT = 3001;
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
 const activeProcesses = new Map();
 
@@ -239,7 +240,7 @@ app.post('/api/agent/generate-gherkin', async (req, res) => {
     let text = '';
     if (engine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
+        model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         response_format: { type: "json_object" }
@@ -290,7 +291,7 @@ app.post('/api/agent/generate-test', async (req, res) => {
     let text = '';
     if (engine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
+        model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         response_format: { type: "json_object" }
@@ -348,7 +349,7 @@ app.post('/api/agent/analyze-coverage', async (req, res) => {
     let text = '';
     if (engine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
+        model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         response_format: { type: "json_object" }
@@ -401,7 +402,7 @@ app.post('/api/agent/improve-test', async (req, res) => {
     let text = '';
     if (engine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
+        model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         response_format: { type: "json_object" }
@@ -605,7 +606,7 @@ async function callAI(engine, apiKey, prompt) {
   try {
     if (resolvedEngine === 'groq') {
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama-3.3-70b-versatile',
+        model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt + "\n\nIMPORTANT: You must respond in valid JSON format." }],
         temperature: 0.1,
         response_format: { type: 'json_object' }
@@ -670,6 +671,8 @@ async function callAI(engine, apiKey, prompt) {
 app.post('/api/agent/super/run', async (req, res) => {
   const { input, userMemory = '', engine = 'gemini', apiKey } = req.body;
   if (!input) return res.status(400).json({ error: 'Missing input for Super Agent' });
+
+  const story = { summary: input, description: '' };
 
   const resolvedEngine = engine.toLowerCase();
   const resolvedKey = apiKey;
@@ -1130,9 +1133,14 @@ app.post('/api/ai/generate', async (req, res) => {
         res.json({ testCases: JSON.parse(jsonText.trim()) });
     }
   } catch (error) {
-    let errorMessage = error.response?.data?.error?.message || error.message;
+    let errorMessage = error.message;
+    if (error.response?.data?.error) {
+        errorMessage = typeof error.response.data.error === 'object' 
+            ? (error.response.data.error.message || JSON.stringify(error.response.data.error))
+            : error.response.data.error;
+    }
     console.error('AI Error:', errorMessage);
-    res.status(500).json({ error: errorMessage });
+    res.status(500).json({ error: String(errorMessage) });
   }
 });
 

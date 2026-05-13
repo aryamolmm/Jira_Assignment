@@ -151,9 +151,6 @@ const SuperAgent = ({ credentials }) => {
       }
 
       setResult(resp.data);
-      if (story?.id) {
-        localStorage.setItem(`testpilot_instruction_${story.id}`, task);
-      }
       setActiveTab('trace');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
