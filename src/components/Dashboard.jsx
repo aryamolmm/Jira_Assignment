@@ -219,7 +219,7 @@ const Dashboard = ({ credentials, onUpdateCredentials, onLogout, onGoToGenerator
             {error && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} style={{ overflow: 'hidden' }}>
                 <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', padding: '1rem', borderRadius: '12px', color: '#fca5a5', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  ⚠️ {error}
+                  ⚠️ {typeof error === 'object' ? (error.message || JSON.stringify(error)) : error}
                 </div>
               </motion.div>
             )}
