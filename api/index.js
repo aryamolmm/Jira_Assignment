@@ -27,6 +27,16 @@ const activeProcesses = new Map();
 app.use(cors());
 app.use(express.json());
 
+// Global Error Handler for Uncaught Exceptions
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]:', err.stack);
+  res.status(500).json({ 
+    error: 'An internal server error occurred', 
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
+  });
+});
+
 // Health check endpoint
 app.get('/api/ping', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), env: process.env.NODE_ENV || 'development' });
@@ -970,16 +980,21 @@ app.post('/api/jira/fetch', async (req, res) => {
   url = url.replace(/\/+$/, '');
   const authHeader = Buffer.from(`${email}:${token}`).toString('base64');
   try {
+    console.log(`[Proxy] Fetching story ${storyId} from ${url}`);
     const response = await axios.get(`${url}/rest/api/3/issue/${storyId}`, {
       headers: {
         'Authorization': `Basic ${authHeader}`,
         'Accept': 'application/json'
       },
-      timeout: 10000 // 10s timeout
+      timeout: 15000 // 15s timeout
     });
+    console.log(`[Proxy] Successfully fetched ${storyId}`);
     res.json(response.data);
   } catch (error) {
     console.error('Jira Proxy Error:', error.response?.status, error.message);
+    if (error.response?.data) {
+        console.error('Jira API Response Error Data:', JSON.stringify(error.response.data));
+    }
     const status = error.response?.status || 500;
     const errorData = error.response?.data;
     

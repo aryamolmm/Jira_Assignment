@@ -16,7 +16,7 @@ export const fetchUserStory = async (baseUrl, email, token, storyId) => {
   // Use current origin if in production, otherwise default to local proxy
   const PROXY_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
     ? 'http://127.0.0.1:3001' 
-    : window.location.origin;
+    : ''; // Relative path for production on same origin
 
   try {
     const response = await axios.post(`${PROXY_URL}/api/jira/fetch`, {
