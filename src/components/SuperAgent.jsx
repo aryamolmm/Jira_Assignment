@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { API_URLS } from '../services/api';
 import {
   Terminal, Play, Cpu, CheckCircle2, XCircle, Brain, Code2,
   Beaker, Zap, Clock, ChevronRight, Copy, Check, SkipForward,
@@ -134,7 +135,7 @@ const SuperAgent = ({ credentials }) => {
                         credentials?.engine === 'claude' ? credentials.claudeKey :
                         credentials?.geminiKey;
 
-      const resp = await axios.post('http://localhost:3001/api/agent/super/run', {
+      const resp = await axios.post(API_URLS.AGENT_RUN, {
         input: task,
         userMemory,
         engine: credentials?.engine || 'gemini',

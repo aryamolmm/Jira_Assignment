@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, XCircle, Clock, Save, MessageSquare, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import { API_URLS } from '../services/api';
 
 const ManualExecutionPage = ({ story }) => {
   const [testCases, setTestCases] = useState([]);
@@ -18,7 +19,7 @@ const ManualExecutionPage = ({ story }) => {
 
   const fetchResults = async () => {
     try {
-      const resp = await axios.get('http://localhost:3001/api/execution-results');
+      const resp = await axios.get(API_URLS.EXECUTION_RESULTS);
       const resultsMap = {};
       resp.data.forEach(res => { resultsMap[res.test_case_id] = res; });
       setExecutionResults(resultsMap);
@@ -53,7 +54,7 @@ const ManualExecutionPage = ({ story }) => {
   const saveExecution = async (tcId) => {
     const res = executionResults[tcId] || {};
     try {
-      await axios.post('http://localhost:3001/api/execute-test', {
+      await axios.post(API_URLS.EXECUTE_TEST, {
         test_case_id: tcId,
         status: res.status || 'Not Run',
         comments: res.comments || '',

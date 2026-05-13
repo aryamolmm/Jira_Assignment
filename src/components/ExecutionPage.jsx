@@ -6,6 +6,7 @@ import {
   Plus, Trash2, Edit3, Save, ChevronRight, FileText, Code
 } from 'lucide-react';
 import axios from 'axios';
+import { API_URLS } from '../services/api';
 
 const ExecutionPage = ({ story, credentials }) => {
   const [steps, setSteps] = useState([]);
@@ -162,7 +163,7 @@ const ExecutionPage = ({ story, credentials }) => {
       const storedInstruction = localStorage.getItem(`testpilot_instruction_${story.id}`);
       const fallbackInstruction = localStorage.getItem('testpilot_ai_memory') || '';
       
-      const resp = await axios.post('http://localhost:3001/api/agent-execute', {
+      const resp = await axios.post(API_URLS.AGENT_EXECUTE, {
         test_case_id: activeTcId,
         steps: finalSteps,
         headless,
@@ -184,7 +185,7 @@ const ExecutionPage = ({ story, credentials }) => {
   const setupStream = (executionId, tcId) => {
     if (eventSourceRef.current) eventSourceRef.current.close();
     
-    const es = new EventSource(`http://localhost:3001/api/agent-stream/${executionId}`);
+    const es = new EventSource(API_URLS.AGENT_STREAM(executionId));
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -230,7 +231,7 @@ const ExecutionPage = ({ story, credentials }) => {
         eventSourceRef.current?.close();
         
         // Save result to report
-        axios.post('http://localhost:3001/api/execute-test', {
+        axios.post(API_URLS.EXECUTE_TEST, {
           test_case_id: tcId,
           status: data.status === 'Success' ? 'Pass' : 'Fail',
           comments: `AI Agent execution finished with status: ${data.status}`,
@@ -469,7 +470,7 @@ const ExecutionPage = ({ story, credentials }) => {
           )}
           {Object.values(screenshots).flat().map((src, i) => (
             <div key={i} style={{ position: 'relative', minWidth: '180px', height: '100%', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
-              <img src={`http://localhost:3001/recordings/${src}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Step screenshot" />
+              <img src={API_URLS.RECORDINGS(src)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Step screenshot" />
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.6)', padding: '2px 8px', fontSize: '0.65rem', color: '#fff' }}>
                 Capture #{i+1}
               </div>

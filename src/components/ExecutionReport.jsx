@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { API_URLS } from '../services/api';
 import { 
   BarChart3, CheckCircle2, XCircle, Clock, Search, 
   Filter, FileText, Download, ExternalLink, Calendar
@@ -40,7 +41,7 @@ const ExecutionReport = () => {
 
   const fetchResults = async () => {
     try {
-      const resp = await axios.get('http://localhost:3001/api/execution-results');
+      const resp = await axios.get(API_URLS.EXECUTION_RESULTS);
       setResults(Array.isArray(resp.data) ? resp.data : []);
     } catch (err) {
       console.error('Failed to fetch results', err);
@@ -108,7 +109,7 @@ const ExecutionReport = () => {
   const handleClearResults = async () => {
     if (window.confirm('Are you sure you want to clear all execution history and generated test cases? This will completely reset the report.')) {
       try {
-        await axios.post('http://localhost:3001/api/execution-results/clear');
+        await axios.post(API_URLS.CLEAR_RESULTS);
         
         // Also clear manual test cases from localStorage
         for (let i = localStorage.length - 1; i >= 0; i--) {

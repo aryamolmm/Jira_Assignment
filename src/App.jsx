@@ -200,7 +200,7 @@ function App() {
           <SidebarButton active={activeTab === 'memory'} icon={<Brain size={18} />} label="AI Memory" onClick={() => setActiveTab('memory')} />
           <SidebarButton active={activeTab === 'settings'} icon={<Settings size={18} />} label="Settings" onClick={() => setActiveTab('settings')} />
 
-          <div style={{ margin: '1.5rem 0 0.5rem', fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Generator Session</div>
+          <div style={{ margin: '1.5rem 0 0.5rem', fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Active Session</div>
           <SidebarButton active={activeTab === 'qa'} disabled={!currentStory} icon={<Beaker size={18} />} label="BDD Testcases" onClick={() => currentStory && setActiveTab('qa')} />
           <SidebarButton active={activeTab === 'automation'} disabled={!currentStory} icon={<Code2 size={18} />} label="Automation Scripts" onClick={() => currentStory && setActiveTab('automation')} />
 
